@@ -9,18 +9,32 @@ export interface EnergyDeliveryRequest {
 
 export interface EnergyDeliveryResult {
   readonly providerOrderId: string;
+  readonly idempotencyKey: string;
   readonly status: "accepted" | "processing" | "completed" | "failed";
 }
 
 export interface EnergyOrderStatus {
   readonly providerOrderId: string;
+  readonly idempotencyKey: string;
   readonly status: "processing" | "completed" | "failed" | "unknown";
 }
 
 export interface EnergyProvider {
   readonly name: string;
 
+  /**
+   * Must be idempotent for the same idempotencyKey.
+   * A retry with the same key must not create a second provider order.
+   */
   createDelivery(request: EnergyDeliveryRequest): Promise<EnergyDeliveryResult>;
 
   getDeliveryStatus(providerOrderId: string): Promise<EnergyOrderStatus>;
+
+  /**
+   * Recovery path for ambiguous createDelivery outcomes such as timeouts.
+   * Callers must query this before deciding whether a create may be retried.
+   */
+  findDeliveryByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<EnergyOrderStatus | undefined>;
 }
