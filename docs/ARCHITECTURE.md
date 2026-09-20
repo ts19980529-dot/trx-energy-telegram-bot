@@ -66,6 +66,12 @@ Planned adapters:
 
 The initial implementation uses MockEnergyProvider only.
 
+Every provider adapter must preserve Energy order idempotency:
+
+- the same `idempotencyKey` must not create a second provider order;
+- an ambiguous create result (for example, a timeout after the provider accepted the order) must be recoverable by `idempotencyKey`;
+- callers must query the existing order before deciding whether a create operation may be retried.
+
 ### SecretProvider
 
 Runtime secret access must be abstracted behind a provider contract.
