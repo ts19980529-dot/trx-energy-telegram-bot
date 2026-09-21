@@ -24,8 +24,8 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install dependencies and refresh lockfile
-        run: npm install --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Type check
         run: npm run typecheck
@@ -47,53 +47,3 @@ jobs:
 
       - name: Test
         run: npm test
-
-  bootstrap-lockfile:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/phase1-telegram-foundation'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      actions: read
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: feat/phase1-telegram-foundation
-
-      - name: Download verified lockfile artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: phase1-package-lock
-          path: .lockfile-artifact
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: 35548448542
-
-      - name: Verify and stage lockfile
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f .lockfile-artifact/package-lock.json
-          actual_sha="$(sha256sum .lockfile-artifact/package-lock.json | awk '{print $1}')"
-          expected_sha="3fccf3fc6fe76eb4c3d84fb0980060ee287eeae8a803a41ce7dd4a775122f7d0"
-          test "$actual_sha" = "$expected_sha"
-          cp .lockfile-artifact/package-lock.json package-lock.json
-          git add package-lock.json
-          if git diff --cached --quiet; then
-            echo "package-lock.json already matches verified artifact"
-            exit 0
-          fi
-
-      - name: Commit verified lockfile
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: lock phase1 dependencies [skip ci]"
-          git push origin HEAD:feat/phase1-telegram-foundation
