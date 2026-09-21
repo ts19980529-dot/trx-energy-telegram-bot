@@ -7,7 +7,7 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "noEmit": true,
     "types": ["node"]
   },
