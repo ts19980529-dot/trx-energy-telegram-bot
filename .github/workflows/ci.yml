@@ -36,10 +36,56 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Export migration candidate
-        uses: actions/upload-artifact@v4
+  bootstrap-migration:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/phase0-foundation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/phase0-foundation
+
+      - name: Download verified migration artifact
+        uses: actions/download-artifact@v4
         with:
           name: phase0-drizzle-migration
-          path: drizzle/
-          if-no-files-found: error
-          retention-days: 1
+          path: .migration-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35547429404
+
+      - name: Verify and stage migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .migration-artifact/0000_open_robin_chapel.sql
+          test -f .migration-artifact/meta/0000_snapshot.json
+          test -f .migration-artifact/meta/_journal.json
+          test "$(sha256sum .migration-artifact/0000_open_robin_chapel.sql | awk '{print $1}')" = "7276b742b4d0f6c864af189f05f727d35369102f952e778b0be8d8996464cc54"
+          test "$(sha256sum .migration-artifact/meta/0000_snapshot.json | awk '{print $1}')" = "62394ced8d24a3f13f48e4396bf54bfb3d6025af3782fa908b497299b685078c"
+          test "$(sha256sum .migration-artifact/meta/_journal.json | awk '{print $1}')" = "95e9a1b69915adc318d276c1dccd066d1271f3b74ca246422898b54a85e1c061"
+          rm -rf drizzle
+          mkdir -p drizzle
+          cp -R .migration-artifact/. drizzle/
+          git add drizzle/
+          if git diff --cached --quiet; then
+            echo "Migration already matches verified artifact"
+            exit 0
+          fi
+
+      - name: Commit verified migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: commit verified phase0 migration [skip ci]"
+          git push origin HEAD:feat/phase0-foundation
