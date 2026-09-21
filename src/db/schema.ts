@@ -125,6 +125,13 @@ export const packagePurchaseOrders = pgTable(
       mode: "bigint",
     }).notNull(),
     paymentAsset: text("payment_asset").notNull(),
+    paymentToAddressSnapshot: text("payment_to_address_snapshot").notNull(),
+    paymentTokenContractAddressSnapshot: text(
+      "payment_token_contract_address_snapshot",
+    ),
+    requiredConfirmationsSnapshot: integer(
+      "required_confirmations_snapshot",
+    ).notNull(),
     quotedAmountAtomic: bigint("quoted_amount_atomic", {
       mode: "bigint",
     }).notNull(),
@@ -158,6 +165,23 @@ export const packagePurchaseOrders = pgTable(
     check(
       "package_purchase_orders_asset_check",
       sql`${table.paymentAsset} in ('USDT', 'TRX')`,
+    ),
+    check(
+      "package_purchase_orders_payment_contract_check",
+      sql`(
+        (${table.paymentAsset} = 'TRX' and ${table.paymentTokenContractAddressSnapshot} is null)
+        or
+        (${table.paymentAsset} = 'USDT' and ${table.paymentTokenContractAddressSnapshot} is not null)
+      )`,
+    ),
+    check(
+      "package_purchase_orders_usdt_quote_check",
+      sql`${table.paymentAsset} <> 'USDT'
+        or ${table.quotedAmountAtomic} = ${table.priceUsdtMicrosSnapshot}`,
+    ),
+    check(
+      "package_purchase_orders_confirmations_positive",
+      sql`${table.requiredConfirmationsSnapshot} > 0`,
     ),
     check(
       "package_purchase_orders_status_check",
@@ -254,6 +278,27 @@ export const packageBalances = pgTable(
   ],
 );
 
+export const energyOptions = pgTable(
+  "energy_options",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    code: text("code").notNull(),
+    energyAmount: bigint("energy_amount", { mode: "bigint" }).notNull(),
+    countCost: integer("count_cost").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("energy_options_code_unique").on(table.code),
+    check("energy_options_energy_positive", sql`${table.energyAmount} > 0`),
+    check("energy_options_count_cost_positive", sql`${table.countCost} > 0`),
+  ],
+);
+
 export const energyConsumptionOrders = pgTable(
   "energy_consumption_orders",
   {
@@ -261,7 +306,11 @@ export const energyConsumptionOrders = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
+    energyOptionId: uuid("energy_option_id")
+      .notNull()
+      .references(() => energyOptions.id, { onDelete: "restrict" }),
     idempotencyKey: text("idempotency_key").notNull(),
+    optionCodeSnapshot: text("option_code_snapshot").notNull(),
     recipientAddress: text("recipient_address").notNull(),
     energyAmount: bigint("energy_amount", { mode: "bigint" }).notNull(),
     countCost: integer("count_cost").notNull(),
@@ -354,6 +403,32 @@ export const balanceLedger = pgTable(
     check(
       "balance_ledger_nonzero_delta",
       sql`${table.availableDelta} <> 0 or ${table.reservedDelta} <> 0`,
+    ),
+    check(
+      "balance_ledger_delta_shape_check",
+      sql`(
+        ${table.reason} = 'purchase_credit'
+        and ${table.availableDelta} > 0
+        and ${table.reservedDelta} = 0
+      ) or (
+        ${table.reason} = 'energy_reserve'
+        and ${table.availableDelta} < 0
+        and ${table.reservedDelta} > 0
+        and ${table.availableDelta} + ${table.reservedDelta} = 0
+      ) or (
+        ${table.reason} = 'energy_consume'
+        and ${table.availableDelta} = 0
+        and ${table.reservedDelta} < 0
+      ) or (
+        ${table.reason} = 'energy_release'
+        and ${table.availableDelta} > 0
+        and ${table.reservedDelta} < 0
+        and ${table.availableDelta} + ${table.reservedDelta} = 0
+      ) or (
+        ${table.reason} = 'admin_adjustment'
+        and ${table.availableDelta} <> 0
+        and ${table.reservedDelta} = 0
+      )`,
     ),
     check(
       "balance_ledger_reference_check",

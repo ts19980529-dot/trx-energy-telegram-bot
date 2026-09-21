@@ -19,7 +19,9 @@ The public Core does not introduce a separate Direct Rental product without expl
 
 Customer-specific package prices are data, not source-code constants.
 
-A purchase order stores immutable snapshots of package code, count, canonical USDT price, selected payment asset, and quoted atomic payment amount. Later package edits therefore cannot rewrite historical order economics.
+A purchase order stores immutable snapshots of package code, count, canonical USDT price, selected payment asset, payment destination, token contract (when applicable), required confirmation count, and quoted atomic payment amount. Later configuration changes therefore cannot rewrite historical order economics or payment expectations.
+
+For USDT orders, the atomic quoted amount must equal the canonical USDT-micro price snapshot. TRX quote derivation remains outside the database until the customer rule is confirmed.
 
 ## TRX pricing boundary
 
@@ -36,6 +38,14 @@ A partial unique index also permits at most one `confirmed` payment for the same
 Package crediting is protected again at the ledger layer: both the purchase order and the payment transaction may appear only once in a `purchase_credit` ledger entry.
 
 A confirmed payment must be credited exactly once inside one PostgreSQL transaction that performs the order transition, balance update and ledger insert together.
+
+## Energy usage configuration
+
+Energy usage options are configuration data, not handler constants.
+
+The `energy_options` table is the Single Source of Truth for the Energy amount and count cost presented to users. An Energy consumption order references the selected option and stores immutable snapshots of option code, Energy amount, and count cost.
+
+Customer-specific values such as the confirmed 65K/131K behavior are provisioned as runtime/database data rather than hard-coded into the public Core.
 
 ## Count balance
 
@@ -81,6 +91,14 @@ A `HybridProvider` may manage multiple downstream provider attempts internally; 
 ## Admin adjustments and audit
 
 Manual balance adjustment is allowed only when linked to an `audit_logs` row. The database reference rule prevents an `admin_adjustment` ledger entry without that audit reference.
+
+Ledger deltas are constrained by reason:
+
+- purchase credit increases available count only;
+- Energy reservation moves count from available to reserved without changing the total;
+- Energy consumption decreases reserved count only;
+- Energy release moves reserved count back to available without changing the total;
+- manual admin adjustment may change available count only and cannot mutate in-flight reserved count.
 
 Audit rows store action/entity identifiers, not secrets.
 

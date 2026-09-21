@@ -80,6 +80,12 @@ Production secrets must never be committed to this repository.
 
 Potential adapters include environment-backed bootstrap, 1Password, Infisical, Doppler, or future providers.
 
+### Signer boundary
+
+Raw wallet private keys are not part of the Core `SecretProvider` contract.
+
+The current Phase 0 Core does not sign TRON transactions. A future OwnPool implementation must use a dedicated signer boundary (for example, a signing service or restricted signing adapter) so application code requests an authorized signature/action rather than fetching a raw `TRON_PRIVATE_KEY`.
+
 ## Customer isolation
 
 Shared:
