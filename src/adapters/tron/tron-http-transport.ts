@@ -3,6 +3,7 @@ import type {
   TronReadView,
 } from "../../core/payments/tron-read-source.js";
 import {
+  resolveTronLatestBlockEndpoint,
   resolveTronReadEndpoint,
   type TronReadOperation,
 } from "./tron-read-endpoints.js";
@@ -37,6 +38,14 @@ export interface TronReadHttpTransport {
   }): Promise<TronHttpReadResult>;
 }
 
+export interface TronLatestBlockHttpTransport {
+  readonly name: string;
+
+  getLatestBlock(input: {
+    readonly view: TronReadView;
+  }): Promise<TronHttpReadResult>;
+}
+
 type FetchLike = (
   input: string | URL,
   init?: RequestInit,
@@ -64,7 +73,9 @@ function normalizeBaseUrl(value: string, field: string): string {
     url.hash !== "" ||
     (url.pathname !== "" && url.pathname !== "/")
   ) {
-    throw new Error(`${field} must be an origin without credentials, path, query or hash`);
+    throw new Error(
+      `${field} must be an origin without credentials, path, query or hash`,
+    );
   }
 
   return url.origin;
@@ -88,7 +99,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   );
 }
 
-export class NodeFetchTronReadHttpTransport implements TronReadHttpTransport {
+export class NodeFetchTronReadHttpTransport
+  implements TronReadHttpTransport, TronLatestBlockHttpTransport
+{
   readonly name = "node-fetch-tron-read";
 
   private readonly headBaseUrl: string;
@@ -126,20 +139,16 @@ export class NodeFetchTronReadHttpTransport implements TronReadHttpTransport {
     }
   }
 
-  async postTransactionRead(input: {
-    readonly view: TronReadView;
-    readonly operation: TronReadOperation;
-    readonly txid: string;
-  }): Promise<TronHttpReadResult> {
-    if (!TXID_PATTERN.test(input.txid)) {
-      throw new Error("txid must be a 64-character hexadecimal string");
-    }
+  private baseUrlFor(view: TronReadView): string {
+    return view === "solidified"
+      ? this.solidifiedBaseUrl
+      : this.headBaseUrl;
+  }
 
-    const baseUrl =
-      input.view === "solidified"
-        ? this.solidifiedBaseUrl
-        : this.headBaseUrl;
-    const endpoint = resolveTronReadEndpoint(input.view, input.operation);
+  private async requestJson(
+    url: string,
+    init: Omit<RequestInit, "headers" | "signal">,
+  ): Promise<TronHttpReadResult> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
     };
@@ -151,10 +160,9 @@ export class NodeFetchTronReadHttpTransport implements TronReadHttpTransport {
     let response: Response;
 
     try {
-      response = await this.fetchImpl(`${baseUrl}${endpoint}`, {
-        method: "POST",
+      response = await this.fetchImpl(url, {
+        ...init,
         headers,
-        body: JSON.stringify({ value: input.txid.toLowerCase() }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
@@ -210,5 +218,38 @@ export class NodeFetchTronReadHttpTransport implements TronReadHttpTransport {
       kind: "ok",
       body: parsed,
     };
+  }
+
+  async postTransactionRead(input: {
+    readonly view: TronReadView;
+    readonly operation: TronReadOperation;
+    readonly txid: string;
+  }): Promise<TronHttpReadResult> {
+    if (!TXID_PATTERN.test(input.txid)) {
+      throw new Error("txid must be a 64-character hexadecimal string");
+    }
+
+    const endpoint = resolveTronReadEndpoint(input.view, input.operation);
+
+    return this.requestJson(
+      `${this.baseUrlFor(input.view)}${endpoint}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ value: input.txid.toLowerCase() }),
+      },
+    );
+  }
+
+  async getLatestBlock(input: {
+    readonly view: TronReadView;
+  }): Promise<TronHttpReadResult> {
+    const endpoint = resolveTronLatestBlockEndpoint(input.view);
+
+    return this.requestJson(
+      `${this.baseUrlFor(input.view)}${endpoint}`,
+      input.view === "solidified"
+        ? { method: "GET" }
+        : { method: "POST" },
+    );
   }
 }
