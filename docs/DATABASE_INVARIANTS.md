@@ -37,6 +37,16 @@ TRC-20 records require a non-negative event position. Top-level TRX records must
 
 Package crediting is protected again at the ledger layer: both the purchase order and the payment transaction may appear only once in a `purchase_credit` ledger entry.
 
+### Payment finality
+
+Candidate detection and final confirmation are separate decisions. FullNode data and historical indexers may discover payment candidates, but neither is sufficient by itself to authorize crediting.
+
+A payment may become `confirmed` only after all immutable order fields match exactly (asset, token contract when applicable, destination and quoted atomic amount), the transaction has authoritative solidified evidence from a SolidityNode view or equivalent local solidified-block index, execution is successful, and the configured confirmation-depth policy is satisfied.
+
+The stored `confirmations` count is therefore an additional policy signal, not a substitute for TRON solidification. If the authoritative solidified receipt is not available yet, the payment remains pending. A non-solidified failure observation must not immediately move the order to a terminal failed state.
+
+Addresses reaching the Core payment evaluator must already be normalized by the adapter into one canonical representation. Under the current contract, underpayment or overpayment does not auto-credit; an amount mismatch remains a reconciliation case until a separate business rule is explicitly approved.
+
 A confirmed payment must be credited exactly once inside one PostgreSQL transaction that performs the order transition, balance update and ledger insert together.
 
 ## Energy usage configuration

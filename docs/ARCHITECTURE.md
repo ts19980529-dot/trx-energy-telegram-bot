@@ -49,9 +49,11 @@ Business rules must not live in handlers.
 
 ### Payment
 
-Responsible for payment observations, confirmation and idempotent consumption.
+Responsible for payment observation, candidate matching, finality verification and idempotent consumption.
 
-A TRON transaction ID (TXID) that is consumed by the business must be unique in the database.
+Detection and final confirmation are separate boundaries. A FullNode or historical indexer may discover a candidate, but it must not by itself authorize a final payment decision. Final confirmation requires evidence from a SolidityNode solidified view or an equivalent local solidified-block index, plus successful execution evidence. A missing solidified receipt remains pending rather than becoming an immediate failure.
+
+For top-level TRX, the business identity is the TXID. For TRC-20, the business identity is token contract + TXID + normalized Event position. Payment adapters normalize addresses and Event identity before invoking Core matching rules.
 
 ### EnergyProvider
 
@@ -143,4 +145,4 @@ This document establishes boundaries only. It does not authorize production paym
 
 Database-level payment, balance and Energy-order invariants are defined in [DATABASE_INVARIANTS.md](DATABASE_INVARIANTS.md).
 
-The PostgreSQL schema must enforce TXID uniqueness and non-negative count balances. Balance reservation/consumption/release must execute transactionally in the Service layer.
+The PostgreSQL schema must enforce the asset-specific payment identity rules (TRX TXID uniqueness and TRC-20 token contract + TXID + Event position uniqueness) and non-negative count balances. Balance reservation/consumption/release must execute transactionally in the Service layer.
