@@ -36,10 +36,52 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Export lockfile candidate
-        uses: actions/upload-artifact@v4
+  bootstrap-lockfile:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/phase0-foundation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/phase0-foundation
+
+      - name: Download verified lockfile artifact
+        uses: actions/download-artifact@v4
         with:
           name: phase0-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+          path: .lockfile-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35546995274
+
+      - name: Verify and stage lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .lockfile-artifact/package-lock.json
+          actual_sha="$(sha256sum .lockfile-artifact/package-lock.json | awk '{print $1}')"
+          expected_sha="67f680d3a7ec00b542bb36adde30d643c0ad430ede819b5adc0520bcdb696025"
+          test "$actual_sha" = "$expected_sha"
+          cp .lockfile-artifact/package-lock.json package-lock.json
+          git add package-lock.json
+          git diff --cached --exit-code && {
+            echo "package-lock.json already matches verified artifact"
+            exit 0
+          } || true
+
+      - name: Commit verified lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: lock verified dependencies [skip ci]"
+          git push origin HEAD:feat/phase0-foundation
