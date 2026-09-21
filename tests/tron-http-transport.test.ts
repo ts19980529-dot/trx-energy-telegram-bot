@@ -75,6 +75,58 @@ describe("NodeFetchTronReadHttpTransport", () => {
     );
   });
 
+  it("reads the latest head block from the head origin", async () => {
+    const calls: Array<[string | URL, RequestInit | undefined]> = [];
+    const fetchImpl = async (
+      input: string | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      calls.push([input, init]);
+      return response({
+        block_header: { raw_data: { number: 70_000_000 } },
+      });
+    };
+    const transport = new NodeFetchTronReadHttpTransport(
+      baseConfig,
+      fetchImpl,
+    );
+
+    await expect(
+      transport.getLatestBlock({ view: "head" }),
+    ).resolves.toMatchObject({ kind: "ok" });
+
+    expect(calls[0]![0]).toBe(
+      "https://head.example.test/wallet/getnowblock",
+    );
+    expect(calls[0]![1]?.method).toBe("POST");
+  });
+
+  it("reads the latest solidified block from the solidity origin", async () => {
+    const calls: Array<[string | URL, RequestInit | undefined]> = [];
+    const fetchImpl = async (
+      input: string | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      calls.push([input, init]);
+      return response({
+        block_header: { raw_data: { number: 69_999_980 } },
+      });
+    };
+    const transport = new NodeFetchTronReadHttpTransport(
+      baseConfig,
+      fetchImpl,
+    );
+
+    await expect(
+      transport.getLatestBlock({ view: "solidified" }),
+    ).resolves.toMatchObject({ kind: "ok" });
+
+    expect(calls[0]![0]).toBe(
+      "https://solid.example.test/walletsolidity/getnowblock",
+    );
+    expect(calls[0]![1]?.method).toBe("GET");
+  });
+
   it("adds TRON-PRO-API-KEY only when supplied", async () => {
     const calls: Array<[string | URL, RequestInit | undefined]> = [];
     const fetchImpl = async (

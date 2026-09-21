@@ -27,3 +27,15 @@ export function resolveTronReadEndpoint(
     ? "/walletsolidity/gettransactionbyid"
     : "/walletsolidity/gettransactioninfobyid";
 }
+
+export type TronLatestBlockEndpoint =
+  | "/wallet/getnowblock"
+  | "/walletsolidity/getnowblock";
+
+export function resolveTronLatestBlockEndpoint(
+  view: TronReadView,
+): TronLatestBlockEndpoint {
+  return view === "solidified"
+    ? "/walletsolidity/getnowblock"
+    : "/wallet/getnowblock";
+}

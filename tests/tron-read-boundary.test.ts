@@ -5,6 +5,7 @@ import {
   TronReadPaymentFinalityVerifier,
 } from "../src/adapters/tron/tron-read-finality-verifier.js";
 import {
+  resolveTronLatestBlockEndpoint,
   resolveTronReadEndpoint,
   tronReadOperations,
 } from "../src/adapters/tron/tron-read-endpoints.js";
@@ -79,6 +80,15 @@ describe("TRON read endpoint allowlist", () => {
       "transaction_body",
       "transaction_info",
     ]);
+  });
+
+  it("maps latest-block reads to the matching read-only view", () => {
+    expect(resolveTronLatestBlockEndpoint("head")).toBe(
+      "/wallet/getnowblock",
+    );
+    expect(resolveTronLatestBlockEndpoint("solidified")).toBe(
+      "/walletsolidity/getnowblock",
+    );
   });
 
   it("maps head and solidified views only to official read-only paths", () => {
