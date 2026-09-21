@@ -251,27 +251,27 @@ describe("NodeFetchTronGridUsdtCandidateHttpTransport", () => {
       },
     );
 
-    await expect(
+    expect(() =>
       transport.listIncomingUsdtTransfers({
         toAddress: "   ",
         tokenContractAddress: "TUSDT",
       }),
-    ).rejects.toThrow(/toAddress/);
+    ).toThrow(/toAddress/);
 
-    await expect(
+    expect(() =>
       transport.listIncomingUsdtTransfers({
         toAddress: "TDESTINATION",
         tokenContractAddress: "   ",
       }),
-    ).rejects.toThrow(/tokenContractAddress/);
+    ).toThrow(/tokenContractAddress/);
 
-    await expect(
+    expect(() =>
       transport.listIncomingUsdtTransfers({
         toAddress: "TDESTINATION",
         tokenContractAddress: "TUSDT",
         cursor: "   ",
       }),
-    ).rejects.toThrow(/cursor/);
+    ).toThrow(/cursor/);
 
     expect(callCount).toBe(0);
   });
