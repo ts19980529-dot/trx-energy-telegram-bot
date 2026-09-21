@@ -27,6 +27,10 @@ export interface TronGridUsdtCandidateHttpTransport {
     readonly tokenContractAddress: string;
     readonly cursor?: string;
   }): Promise<TronGridCandidatePageResult>;
+
+  listTransactionEvents(input: {
+    readonly transactionId: string;
+  }): Promise<TronGridCandidatePageResult>;
 }
 
 type FetchLike = (
@@ -82,6 +86,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   );
 }
 
+const TXID_PATTERN = /^[0-9a-fA-F]{64}$/;
+
 function nonEmpty(value: string, field: string): string {
   const trimmed = value.trim();
 
@@ -90,6 +96,18 @@ function nonEmpty(value: string, field: string): string {
   }
 
   return trimmed;
+}
+
+function transactionId(value: string): string {
+  const normalized = value.trim();
+
+  if (!TXID_PATTERN.test(normalized)) {
+    throw new Error(
+      "transactionId must be a 64-character hexadecimal string",
+    );
+  }
+
+  return normalized.toLowerCase();
 }
 
 export class NodeFetchTronGridUsdtCandidateHttpTransport
@@ -229,6 +247,20 @@ export class NodeFetchTronGridUsdtCandidateHttpTransport
         nonEmpty(input.cursor, "cursor"),
       );
     }
+
+    return this.requestJson(url);
+  }
+
+  listTransactionEvents(input: {
+    readonly transactionId: string;
+  }): Promise<TronGridCandidatePageResult> {
+    const normalizedTransactionId = transactionId(input.transactionId);
+    const url = new URL(
+      `/v1/transactions/${normalizedTransactionId}/events`,
+      this.baseUrl,
+    );
+
+    url.searchParams.set("only_confirmed", "true");
 
     return this.requestJson(url);
   }
