@@ -29,6 +29,25 @@ export type TronReadOutcome =
       readonly reason: TronReadUnavailableReason;
     };
 
+export type TronConfirmationDepthOutcome =
+  | {
+      readonly kind: "available";
+      readonly confirmations: number;
+    }
+  | {
+      readonly kind: "unavailable";
+      readonly reason: TronReadUnavailableReason;
+    };
+
+export interface TronConfirmationDepthProvider {
+  readonly name: string;
+
+  getConfirmationDepth(input: {
+    readonly view: TronReadView;
+    readonly transactionBlockNumber: string;
+  }): Promise<TronConfirmationDepthOutcome>;
+}
+
 export interface TronPaymentEvidenceReader {
   readonly name: string;
 
