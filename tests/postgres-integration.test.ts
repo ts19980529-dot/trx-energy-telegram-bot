@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { PostgresPaymentLifecycleRepository } from "../src/adapters/database/postgres-payment-lifecycle-repository.js";
 import {
   PostgresPurchaseOrderCustomerRepository,
   PostgresPurchaseOrderRepository,
@@ -34,6 +35,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let packageRepository: PostgresEnergyPackageRepository;
   let purchaseOrderRepository: PostgresPurchaseOrderRepository;
   let purchaseOrderCustomerRepository: PostgresPurchaseOrderCustomerRepository;
+  let paymentLifecycleRepository: PostgresPaymentLifecycleRepository;
 
   beforeAll(async () => {
     resource = createPostgresResource(TEST_DATABASE_URL ?? "");
@@ -53,6 +55,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     purchaseOrderRepository = new PostgresPurchaseOrderRepository(resource.db);
     purchaseOrderCustomerRepository =
       new PostgresPurchaseOrderCustomerRepository(resource.db);
+    paymentLifecycleRepository =
+      new PostgresPaymentLifecycleRepository(resource.db);
   });
 
   afterAll(async () => {
@@ -503,6 +507,543 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       );
 
     expect(rows).toEqual([{ userId: firstUser.id }]);
+  });
+
+  it("persists payment evidence monotonically and advances the order atomically", async () => {
+    const user = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_009n,
+      username: "phase2_payment_lifecycle",
+    });
+    const packageId = "55555555-5555-4555-8555-555555555555";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_payment_lifecycle_package",
+        count: 10,
+        priceUsdtMicros: 17_000_000n,
+        enabled: true,
+        sortOrder: 50,
+      })
+      .onConflictDoNothing();
+
+    const created = await purchaseOrderRepository.createOrGet({
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase2:payment:lifecycle",
+      payment: {
+        packageCodeSnapshot:
+          "phase2_payment_lifecycle_package",
+        countSnapshot: 10,
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot:
+          "TTEST_PAYMENT_DESTINATION",
+        paymentTokenContractAddressSnapshot:
+          "TTEST_USDT_CONTRACT",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 17_000_000n,
+        quoteExpiresAt: null,
+      },
+    });
+
+    if (created.kind === "conflict") {
+      throw new Error("Unexpected order idempotency conflict");
+    }
+
+    const baseObservation = {
+      asset: "USDT" as const,
+      txid: "e".repeat(64),
+      tokenContractAddress: "TTEST_USDT_CONTRACT",
+      eventIndex: 0,
+      fromAddress: "TTEST_PAYMENT_SENDER",
+      toAddress: "TTEST_PAYMENT_DESTINATION",
+      amountAtomic: 17_000_000n,
+      blockNumber: 70_000_000n,
+      blockTimestamp: new Date("2026-09-21T15:00:00.000Z"),
+    };
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          ...baseObservation,
+          confirmations: 0,
+          solidified: false,
+          evidenceSource: "fullnode",
+          executionStatus: "success",
+        },
+      }),
+    ).resolves.toMatchObject({
+      kind: "applied",
+      transactionStatus: "detected",
+      orderStatus: "payment_detected",
+    });
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          ...baseObservation,
+          confirmations: 1,
+          solidified: true,
+          evidenceSource: "solidified_node",
+          executionStatus: "success",
+        },
+      }),
+    ).resolves.toMatchObject({
+      kind: "applied",
+      transactionStatus: "confirming",
+      orderStatus: "confirming",
+    });
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          ...baseObservation,
+          confirmations: 0,
+          solidified: false,
+          evidenceSource: "fullnode",
+          executionStatus: "success",
+        },
+      }),
+    ).resolves.toMatchObject({
+      kind: "applied",
+      transactionStatus: "confirming",
+      orderStatus: "confirming",
+    });
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          ...baseObservation,
+          confirmations: 2,
+          solidified: true,
+          evidenceSource: "solidified_node",
+          executionStatus: "success",
+        },
+      }),
+    ).resolves.toMatchObject({
+      kind: "applied",
+      transactionStatus: "confirmed",
+      orderStatus: "paid",
+    });
+
+    const [paymentRow] = await resource.db
+      .select()
+      .from(paymentTransactions)
+      .where(eq(paymentTransactions.txid, baseObservation.txid));
+
+    expect(paymentRow).toMatchObject({
+      purchaseOrderId: created.order.id,
+      status: "confirmed",
+      confirmations: 2,
+      blockNumber: 70_000_000n,
+    });
+    expect(paymentRow?.confirmedAt).not.toBeNull();
+
+    const [orderRow] = await resource.db
+      .select({ status: packagePurchaseOrders.status })
+      .from(packagePurchaseOrders)
+      .where(eq(packagePurchaseOrders.id, created.order.id));
+
+    expect(orderRow?.status).toBe("paid");
+
+    const [balance] = await resource.db
+      .select({
+        availableCount: packageBalances.availableCount,
+        reservedCount: packageBalances.reservedCount,
+      })
+      .from(packageBalances)
+      .where(eq(packageBalances.userId, user.id));
+
+    expect(balance).toEqual({
+      availableCount: 0,
+      reservedCount: 0,
+    });
+  });
+
+  it("serializes concurrent confirmed evidence to one payment row without crediting balance", async () => {
+    const user = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_010n,
+      username: "phase2_payment_concurrent",
+    });
+    const packageId = "66666666-6666-4666-8666-666666666666";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_payment_concurrent_package",
+        count: 20,
+        priceUsdtMicros: 34_000_000n,
+        enabled: true,
+        sortOrder: 60,
+      })
+      .onConflictDoNothing();
+
+    const created = await purchaseOrderRepository.createOrGet({
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase2:payment:concurrent",
+      payment: {
+        packageCodeSnapshot:
+          "phase2_payment_concurrent_package",
+        countSnapshot: 20,
+        priceUsdtMicrosSnapshot: 34_000_000n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot:
+          "TTEST_CONCURRENT_DESTINATION",
+        paymentTokenContractAddressSnapshot:
+          "TTEST_USDT_CONTRACT",
+        requiredConfirmationsSnapshot: 1,
+        quotedAmountAtomic: 34_000_000n,
+        quoteExpiresAt: null,
+      },
+    });
+
+    if (created.kind === "conflict") {
+      throw new Error("Unexpected order idempotency conflict");
+    }
+
+    const observation = {
+      asset: "USDT" as const,
+      txid: "f".repeat(64),
+      tokenContractAddress: "TTEST_USDT_CONTRACT",
+      eventIndex: 1,
+      fromAddress: "TTEST_CONCURRENT_SENDER",
+      toAddress: "TTEST_CONCURRENT_DESTINATION",
+      amountAtomic: 34_000_000n,
+      confirmations: 1,
+      solidified: true,
+      evidenceSource: "solidified_node" as const,
+      executionStatus: "success" as const,
+      blockNumber: 70_000_100n,
+      blockTimestamp: new Date("2026-09-21T15:01:00.000Z"),
+    };
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        paymentLifecycleRepository.applyObservation({
+          purchaseOrderId: created.order.id,
+          observation,
+        }),
+      ),
+    );
+
+    expect(
+      results.filter((result) => result.kind === "applied"),
+    ).toHaveLength(1);
+    expect(
+      results.filter(
+        (result) => result.kind === "terminal_noop",
+      ),
+    ).toHaveLength(5);
+
+    const rows = await resource.db
+      .select()
+      .from(paymentTransactions)
+      .where(eq(paymentTransactions.txid, observation.txid));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe("confirmed");
+
+    const [orderRow] = await resource.db
+      .select({ status: packagePurchaseOrders.status })
+      .from(packagePurchaseOrders)
+      .where(eq(packagePurchaseOrders.id, created.order.id));
+
+    expect(orderRow?.status).toBe("paid");
+
+    const [balance] = await resource.db
+      .select({ availableCount: packageBalances.availableCount })
+      .from(packageBalances)
+      .where(eq(packageBalances.userId, user.id));
+
+    expect(balance?.availableCount).toBe(0);
+  });
+
+  it("keeps mismatched evidence out of the automatic payment lifecycle", async () => {
+    const user = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_011n,
+      username: "phase2_payment_mismatch",
+    });
+    const packageId = "77777777-7777-4777-8777-777777777777";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_payment_mismatch_package",
+        count: 50,
+        priceUsdtMicros: 85_000_000n,
+        enabled: true,
+        sortOrder: 70,
+      })
+      .onConflictDoNothing();
+
+    const created = await purchaseOrderRepository.createOrGet({
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase2:payment:mismatch",
+      payment: {
+        packageCodeSnapshot:
+          "phase2_payment_mismatch_package",
+        countSnapshot: 50,
+        priceUsdtMicrosSnapshot: 85_000_000n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot:
+          "TTEST_MISMATCH_DESTINATION",
+        paymentTokenContractAddressSnapshot:
+          "TTEST_USDT_CONTRACT",
+        requiredConfirmationsSnapshot: 1,
+        quotedAmountAtomic: 85_000_000n,
+        quoteExpiresAt: null,
+      },
+    });
+
+    if (created.kind === "conflict") {
+      throw new Error("Unexpected order idempotency conflict");
+    }
+
+    const txid = "1".repeat(64);
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          asset: "USDT",
+          txid,
+          tokenContractAddress: "TTEST_USDT_CONTRACT",
+          eventIndex: 2,
+          fromAddress: "TTEST_MISMATCH_SENDER",
+          toAddress: "TTEST_MISMATCH_DESTINATION",
+          amountAtomic: 84_999_999n,
+          confirmations: 1,
+          solidified: true,
+          evidenceSource: "solidified_node",
+          executionStatus: "success",
+        },
+      }),
+    ).resolves.toEqual({
+      kind: "ignored",
+      reason: "reconciliation_mismatch",
+    });
+
+    const paymentRows = await resource.db
+      .select({ id: paymentTransactions.id })
+      .from(paymentTransactions)
+      .where(eq(paymentTransactions.txid, txid));
+
+    expect(paymentRows).toHaveLength(0);
+
+    const [orderRow] = await resource.db
+      .select({ status: packagePurchaseOrders.status })
+      .from(packagePurchaseOrders)
+      .where(eq(packagePurchaseOrders.id, created.order.id));
+
+    expect(orderRow?.status).toBe("waiting_payment");
+  });
+
+  it("prevents one payment identity from being consumed by two purchase orders", async () => {
+    const firstUser = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_012n,
+      username: "phase2_payment_identity_first",
+    });
+    const secondUser = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_013n,
+      username: "phase2_payment_identity_second",
+    });
+    const packageId = "88888888-8888-4888-8888-888888888888";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_payment_identity_package",
+        count: 100,
+        priceUsdtMicros: 170_000_000n,
+        enabled: true,
+        sortOrder: 80,
+      })
+      .onConflictDoNothing();
+
+    const payment = {
+      packageCodeSnapshot: "phase2_payment_identity_package",
+      countSnapshot: 100,
+      priceUsdtMicrosSnapshot: 170_000_000n,
+      paymentAsset: "USDT" as const,
+      paymentToAddressSnapshot:
+        "TTEST_IDENTITY_DESTINATION",
+      paymentTokenContractAddressSnapshot:
+        "TTEST_USDT_CONTRACT",
+      requiredConfirmationsSnapshot: 1,
+      quotedAmountAtomic: 170_000_000n,
+      quoteExpiresAt: null,
+    };
+
+    const firstOrder = await purchaseOrderRepository.createOrGet({
+      userId: firstUser.id,
+      packageId,
+      idempotencyKey: "phase2:payment:identity:first",
+      payment,
+    });
+    const secondOrder = await purchaseOrderRepository.createOrGet({
+      userId: secondUser.id,
+      packageId,
+      idempotencyKey: "phase2:payment:identity:second",
+      payment,
+    });
+
+    if (
+      firstOrder.kind === "conflict" ||
+      secondOrder.kind === "conflict"
+    ) {
+      throw new Error("Unexpected order idempotency conflict");
+    }
+
+    const observation = {
+      asset: "USDT" as const,
+      txid: "2".repeat(64),
+      tokenContractAddress: "TTEST_USDT_CONTRACT",
+      eventIndex: 3,
+      fromAddress: "TTEST_IDENTITY_SENDER",
+      toAddress: "TTEST_IDENTITY_DESTINATION",
+      amountAtomic: 170_000_000n,
+      confirmations: 1,
+      solidified: true,
+      evidenceSource: "solidified_node" as const,
+      executionStatus: "success" as const,
+    };
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: firstOrder.order.id,
+        observation,
+      }),
+    ).resolves.toMatchObject({
+      kind: "applied",
+      transactionStatus: "confirmed",
+      orderStatus: "paid",
+    });
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: secondOrder.order.id,
+        observation,
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      reason: "payment_identity_conflict",
+    });
+
+    const [secondOrderRow] = await resource.db
+      .select({ status: packagePurchaseOrders.status })
+      .from(packagePurchaseOrders)
+      .where(eq(packagePurchaseOrders.id, secondOrder.order.id));
+
+    expect(secondOrderRow?.status).toBe("waiting_payment");
+  });
+
+  it("fails closed when authoritative evidence contradicts a rejected terminal payment", async () => {
+    const user = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_014n,
+      username: "phase2_payment_terminal_conflict",
+    });
+    const packageId = "99999999-9999-4999-8999-999999999999";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_payment_terminal_package",
+        count: 200,
+        priceUsdtMicros: 340_000_000n,
+        enabled: true,
+        sortOrder: 90,
+      })
+      .onConflictDoNothing();
+
+    const created = await purchaseOrderRepository.createOrGet({
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase2:payment:terminal-conflict",
+      payment: {
+        packageCodeSnapshot:
+          "phase2_payment_terminal_package",
+        countSnapshot: 200,
+        priceUsdtMicrosSnapshot: 340_000_000n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot:
+          "TTEST_TERMINAL_DESTINATION",
+        paymentTokenContractAddressSnapshot:
+          "TTEST_USDT_CONTRACT",
+        requiredConfirmationsSnapshot: 1,
+        quotedAmountAtomic: 340_000_000n,
+        quoteExpiresAt: null,
+      },
+    });
+
+    if (created.kind === "conflict") {
+      throw new Error("Unexpected order idempotency conflict");
+    }
+
+    const base = {
+      asset: "USDT" as const,
+      txid: "3".repeat(64),
+      tokenContractAddress: "TTEST_USDT_CONTRACT",
+      eventIndex: 4,
+      fromAddress: "TTEST_TERMINAL_SENDER",
+      toAddress: "TTEST_TERMINAL_DESTINATION",
+      amountAtomic: 340_000_000n,
+      confirmations: 1,
+      solidified: true,
+      evidenceSource: "solidified_node" as const,
+    };
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          ...base,
+          executionStatus: "failed",
+        },
+      }),
+    ).resolves.toMatchObject({
+      kind: "applied",
+      transactionStatus: "rejected",
+      orderStatus: "failed",
+    });
+
+    await expect(
+      paymentLifecycleRepository.applyObservation({
+        purchaseOrderId: created.order.id,
+        observation: {
+          ...base,
+          executionStatus: "success",
+        },
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      reason: "transaction_terminal_conflict",
+    });
+
+    const [paymentRow] = await resource.db
+      .select({ status: paymentTransactions.status })
+      .from(paymentTransactions)
+      .where(eq(paymentTransactions.txid, base.txid));
+
+    expect(paymentRow?.status).toBe("rejected");
+
+    const [orderRow] = await resource.db
+      .select({ status: packagePurchaseOrders.status })
+      .from(packagePurchaseOrders)
+      .where(eq(packagePurchaseOrders.id, created.order.id));
+
+    expect(orderRow?.status).toBe("failed");
   });
 
 });
