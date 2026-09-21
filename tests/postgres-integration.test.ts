@@ -15,6 +15,7 @@ import {
   adminAccounts,
   energyPackages,
   packageBalances,
+  paymentTransactions,
   users,
 } from "../src/db/schema.js";
 
@@ -237,4 +238,99 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         .where(eq(users.telegramUserId, telegramUserId)),
     ).rejects.toBeTruthy();
   });
+  it("uses event-level identity for TRC-20 and tx-level identity for TRX", async () => {
+    const sharedUsdtTxid = "a".repeat(64);
+    const usdtContract = "TUSDT_PHASE2_CONTRACT";
+
+    await resource.db.insert(paymentTransactions).values([
+      {
+        txid: sharedUsdtTxid,
+        asset: "USDT",
+        tokenContractAddress: usdtContract,
+        eventIndex: 0,
+        fromAddress: "TUSDT_FROM_0",
+        toAddress: "TUSDT_TO",
+        amountAtomic: 17_000_000n,
+      },
+      {
+        txid: sharedUsdtTxid,
+        asset: "USDT",
+        tokenContractAddress: usdtContract,
+        eventIndex: 1,
+        fromAddress: "TUSDT_FROM_1",
+        toAddress: "TUSDT_TO",
+        amountAtomic: 34_000_000n,
+      },
+    ]);
+
+    const sameTransactionEvents = await resource.db
+      .select({ eventIndex: paymentTransactions.eventIndex })
+      .from(paymentTransactions)
+      .where(eq(paymentTransactions.txid, sharedUsdtTxid));
+
+    expect(sameTransactionEvents.map((row) => row.eventIndex).sort()).toEqual([
+      0,
+      1,
+    ]);
+
+    await expect(
+      resource.db.insert(paymentTransactions).values({
+        txid: sharedUsdtTxid,
+        asset: "USDT",
+        tokenContractAddress: usdtContract,
+        eventIndex: 0,
+        fromAddress: "TUSDT_DUPLICATE",
+        toAddress: "TUSDT_TO",
+        amountAtomic: 17_000_000n,
+      }),
+    ).rejects.toBeTruthy();
+
+    await expect(
+      resource.db.insert(paymentTransactions).values({
+        txid: "c".repeat(64),
+        asset: "USDT",
+        tokenContractAddress: usdtContract,
+        fromAddress: "TUSDT_NO_EVENT",
+        toAddress: "TUSDT_TO",
+        amountAtomic: 17_000_000n,
+      }),
+    ).rejects.toBeTruthy();
+
+    const trxTxid = "b".repeat(64);
+
+    await resource.db.insert(paymentTransactions).values({
+      txid: trxTxid,
+      asset: "TRX",
+      tokenContractAddress: null,
+      eventIndex: null,
+      fromAddress: "TTRX_FROM",
+      toAddress: "TTRX_TO",
+      amountAtomic: 1_000_000n,
+    });
+
+    await expect(
+      resource.db.insert(paymentTransactions).values({
+        txid: trxTxid,
+        asset: "TRX",
+        tokenContractAddress: null,
+        eventIndex: null,
+        fromAddress: "TTRX_DUPLICATE",
+        toAddress: "TTRX_TO",
+        amountAtomic: 1_000_000n,
+      }),
+    ).rejects.toBeTruthy();
+
+    await expect(
+      resource.db.insert(paymentTransactions).values({
+        txid: "d".repeat(64),
+        asset: "TRX",
+        tokenContractAddress: null,
+        eventIndex: 0,
+        fromAddress: "TTRX_EVENT_INDEX",
+        toAddress: "TTRX_TO",
+        amountAtomic: 1_000_000n,
+      }),
+    ).rejects.toBeTruthy();
+  });
+
 });

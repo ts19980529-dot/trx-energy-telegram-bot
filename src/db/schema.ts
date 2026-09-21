@@ -208,6 +208,7 @@ export const paymentTransactions = pgTable(
     txid: text("txid").notNull(),
     asset: text("asset").notNull(),
     tokenContractAddress: text("token_contract_address"),
+    eventIndex: integer("event_index"),
     fromAddress: text("from_address").notNull(),
     toAddress: text("to_address").notNull(),
     amountAtomic: bigint("amount_atomic", { mode: "bigint" }).notNull(),
@@ -224,7 +225,13 @@ export const paymentTransactions = pgTable(
       .notNull(),
   },
   (table) => [
-    unique("payment_transactions_txid_unique").on(table.txid),
+    index("payment_transactions_txid_idx").on(table.txid),
+    uniqueIndex("payment_transactions_trx_txid_unique")
+      .on(table.txid)
+      .where(sql`${table.asset} = 'TRX'`),
+    uniqueIndex("payment_transactions_trc20_event_unique")
+      .on(table.tokenContractAddress, table.txid, table.eventIndex)
+      .where(sql`${table.asset} = 'USDT'`),
     index("payment_transactions_purchase_order_idx").on(table.purchaseOrderId),
     uniqueIndex("payment_transactions_confirmed_order_unique")
       .on(table.purchaseOrderId)
@@ -253,6 +260,18 @@ export const paymentTransactions = pgTable(
         (${table.asset} = 'TRX' and ${table.tokenContractAddress} is null)
         or
         (${table.asset} = 'USDT' and ${table.tokenContractAddress} is not null)
+      )`,
+    ),
+    check(
+      "payment_transactions_event_position_check",
+      sql`(
+        (${table.asset} = 'TRX' and ${table.eventIndex} is null)
+        or
+        (
+          ${table.asset} = 'USDT'
+          and ${table.eventIndex} is not null
+          and ${table.eventIndex} >= 0
+        )
       )`,
     ),
   ],
