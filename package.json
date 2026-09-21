@@ -11,11 +11,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm run build && npm test",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/runtime/start.js"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "grammy": "1.45.1"
   },
   "devDependencies": {
     "@types/node": "24.13.6",

@@ -24,11 +24,14 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install locked dependencies
-        run: npm ci --no-audit --no-fund
+      - name: Install dependencies and refresh lockfile
+        run: npm install --no-audit --no-fund
 
       - name: Type check
         run: npm run typecheck
+
+      - name: Build
+        run: npm run build
 
       - name: Verify database migration is current
         shell: bash
@@ -44,3 +47,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Export lockfile candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
