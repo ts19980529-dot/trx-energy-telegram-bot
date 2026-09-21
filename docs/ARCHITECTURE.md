@@ -57,6 +57,8 @@ For top-level TRX, the business identity is the TXID. For TRC-20, the business i
 
 The canonical Core representation for TRON addresses is Base58Check. External adapters may receive Base58Check or 21-byte `41...` hex forms depending on the upstream API, but they must pass addresses through a `TronAddressCodec` that converts and checksum-validates them before constructing a `PaymentObservation`. Raw TXIDs are normalized to lowercase 64-character hex. Atomic amounts and block numbers are parsed from unsigned decimal strings into `bigint`; floating-point conversion is forbidden. TRC-20 Event position must be a non-negative integer. The normalization boundary derives `solidified` from the declared evidence source rather than trusting an arbitrary upstream boolean.
 
+The minimum TRON node read boundary for a known TXID is allowlisted to transaction-body and transaction-info reads only. Head reads map to `/wallet/gettransactionbyid` and `/wallet/gettransactioninfobyid`; finality reads map to the corresponding `/walletsolidity/` endpoints. The finality adapter always requests the solidified view. A solidified `not_found` result means “not final/available yet” and remains pending. Timeout, rate limit, upstream failure, malformed data, non-solidified evidence returned from a solidified read, or identity mismatch are adapter errors and must never be converted into `not_found` or a business rejection. This boundary contains no transaction creation, signing or broadcast operation.
+
 ### EnergyProvider
 
 All Energy delivery implementations must satisfy one provider contract.
