@@ -35,3 +35,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Export lockfile candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
