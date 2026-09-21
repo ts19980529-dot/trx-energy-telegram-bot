@@ -8,6 +8,7 @@ export type TronReadView = (typeof tronReadViews)[number];
 export const tronReadUnavailableReasons = [
   "timeout",
   "rate_limited",
+  "access_denied",
   "upstream_error",
   "malformed_response",
 ] as const;
