@@ -8,6 +8,13 @@
       "when": 1789950214474,
       "tag": "0000_open_robin_chapel",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0001_payment_event_identity",
+      "breakpoints": true
     }
   ]
 }
