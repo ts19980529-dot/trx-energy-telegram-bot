@@ -13,6 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import { adminRoles } from "../core/admin/roles.js";
 import {
   energyConsumptionStates,
   purchaseOrderStates,
@@ -79,7 +80,10 @@ export const adminAccounts = pgTable(
     unique("admin_accounts_user_id_unique").on(table.userId),
     check(
       "admin_accounts_role_check",
-      sql`${table.role} in ('SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'VIEWER')`,
+      sql`${table.role} in (${sql.join(
+        adminRoles.map((role) => sql.raw(`'${role}'`)),
+        sql.raw(", "),
+      )})`,
     ),
   ],
 );
