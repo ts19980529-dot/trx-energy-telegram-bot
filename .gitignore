@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build / test output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime / local state
+logs/
+*.log
+tmp/
+.temp/
+.cache/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local database / dumps
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz

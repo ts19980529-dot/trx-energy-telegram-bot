@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Verify database migration is current
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run db:generate
+          if [ -n "$(git status --porcelain -- drizzle/)" ]; then
+            echo "Drizzle migration drift detected:"
+            git status --short -- drizzle/
+            git diff -- drizzle/
+            exit 1
+          fi
+
+      - name: Test
+        run: npm test
