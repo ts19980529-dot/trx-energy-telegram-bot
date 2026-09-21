@@ -59,6 +59,8 @@ The canonical Core representation for TRON addresses is Base58Check. External ad
 
 The minimum TRON node read boundary for a known TXID is allowlisted to transaction-body and transaction-info reads only. Head reads map to `/wallet/gettransactionbyid` and `/wallet/gettransactioninfobyid`; finality reads map to the corresponding `/walletsolidity/` endpoints. The finality adapter always requests the solidified view. A solidified `not_found` result means “not final/available yet” and remains pending. Timeout, rate limit, upstream failure, malformed data, non-solidified evidence returned from a solidified read, or identity mismatch are adapter errors and must never be converted into `not_found` or a business rejection. This boundary contains no transaction creation, signing or broadcast operation.
 
+The read-only HTTP transport uses separate head and solidified base origins and only appends the allowlisted paths above. It sends `POST` with `{ "value": "<txid>" }`, lowercases a validated 64-hex TXID, and may add `TRON-PRO-API-KEY` only when the caller supplies it. Base URLs must be plain HTTP(S) origins without embedded credentials, paths, query strings or fragments. Timeout is enforced with `AbortSignal`. An empty JSON object is `not_found`; HTTP 200 with an `Error` field is an upstream failure; 429 is rate-limited; authentication/authorization failures remain adapter errors; invalid JSON is malformed response. The transport does not decode transaction bodies or receipts and is not wired to runtime secrets in this phase.
+
 ### EnergyProvider
 
 All Energy delivery implementations must satisfy one provider contract.
