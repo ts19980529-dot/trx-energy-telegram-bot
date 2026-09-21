@@ -10,6 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:postgres": "vitest run tests/postgres-integration.test.ts",
     "db:generate": "drizzle-kit generate",
     "check": "npm run typecheck && npm run build && npm test",
     "build": "tsc -p tsconfig.build.json",
