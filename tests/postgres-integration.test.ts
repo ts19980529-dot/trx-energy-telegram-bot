@@ -3,6 +3,10 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  PostgresPurchaseOrderCustomerRepository,
+  PostgresPurchaseOrderRepository,
+} from "../src/adapters/database/postgres-purchase-order-repository.js";
+import {
   PostgresEnergyPackageRepository,
   PostgresTelegramUserRepository,
 } from "../src/adapters/database/postgres-telegram-repositories.js";
@@ -15,6 +19,7 @@ import {
   adminAccounts,
   energyPackages,
   packageBalances,
+  packagePurchaseOrders,
   paymentTransactions,
   users,
 } from "../src/db/schema.js";
@@ -27,6 +32,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let resource: PostgresResource;
   let userRepository: PostgresTelegramUserRepository;
   let packageRepository: PostgresEnergyPackageRepository;
+  let purchaseOrderRepository: PostgresPurchaseOrderRepository;
+  let purchaseOrderCustomerRepository: PostgresPurchaseOrderCustomerRepository;
 
   beforeAll(async () => {
     resource = createPostgresResource(TEST_DATABASE_URL ?? "");
@@ -43,6 +50,9 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
 
     userRepository = new PostgresTelegramUserRepository(resource.db);
     packageRepository = new PostgresEnergyPackageRepository(resource.db);
+    purchaseOrderRepository = new PostgresPurchaseOrderRepository(resource.db);
+    purchaseOrderCustomerRepository =
+      new PostgresPurchaseOrderCustomerRepository(resource.db);
   });
 
   afterAll(async () => {
@@ -331,6 +341,168 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         amountAtomic: 1_000_000n,
       }),
     ).rejects.toBeTruthy();
+  });
+
+  it("creates purchase orders transactionally and keeps concurrent retries idempotent", async () => {
+    const telegramUserId = 9_100_000_000_006n;
+    const user = await userRepository.onboard({
+      telegramUserId,
+      username: "phase2_purchase_order",
+    });
+    const packageId = "33333333-3333-4333-8333-333333333333";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_order_package",
+        count: 10,
+        priceUsdtMicros: 17_000_000n,
+        enabled: true,
+        sortOrder: 30,
+      })
+      .onConflictDoNothing();
+
+    const input = {
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase2:purchase:concurrent",
+      payment: {
+        packageCodeSnapshot: "phase2_order_package",
+        countSnapshot: 10,
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAsset: "USDT" as const,
+        paymentToAddressSnapshot:
+          "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+        paymentTokenContractAddressSnapshot:
+          "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 17_000_000n,
+        quoteExpiresAt: null,
+      },
+    };
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        purchaseOrderRepository.createOrGet(input),
+      ),
+    );
+
+    const ready = results.filter(
+      (result) => result.kind !== "conflict",
+    );
+
+    expect(ready).toHaveLength(6);
+    expect(
+      new Set(
+        ready.map((result) => result.order.id),
+      ).size,
+    ).toBe(1);
+    expect(
+      results.filter((result) => result.kind === "created"),
+    ).toHaveLength(1);
+
+    const rows = await resource.db
+      .select()
+      .from(packagePurchaseOrders)
+      .where(
+        eq(
+          packagePurchaseOrders.idempotencyKey,
+          input.idempotencyKey,
+        ),
+      );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe("waiting_payment");
+
+    const first = ready[0];
+
+    if (first === undefined) {
+      throw new Error("Expected persisted purchase order");
+    }
+
+    expect(first.order.expectation).toEqual({
+      asset: "USDT",
+      tokenContractAddress:
+        "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+      toAddress: "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+      amountAtomic: 17_000_000n,
+      requiredConfirmations: 2,
+    });
+
+    await expect(
+      purchaseOrderCustomerRepository.findActiveUserIdByTelegramUserId(
+        telegramUserId,
+      ),
+    ).resolves.toBe(user.id);
+  });
+
+  it("detects idempotency-key reuse with a different immutable payload", async () => {
+    const firstUser = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_007n,
+      username: "phase2_idempotency_first",
+    });
+    const secondUser = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_008n,
+      username: "phase2_idempotency_second",
+    });
+    const packageId = "44444444-4444-4444-8444-444444444444";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_conflict_package",
+        count: 20,
+        priceUsdtMicros: 34_000_000n,
+        enabled: true,
+        sortOrder: 40,
+      })
+      .onConflictDoNothing();
+
+    const payment = {
+      packageCodeSnapshot: "phase2_conflict_package",
+      countSnapshot: 20,
+      priceUsdtMicrosSnapshot: 34_000_000n,
+      paymentAsset: "USDT" as const,
+      paymentToAddressSnapshot:
+        "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+      paymentTokenContractAddressSnapshot:
+        "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+      requiredConfirmationsSnapshot: 2,
+      quotedAmountAtomic: 34_000_000n,
+      quoteExpiresAt: null,
+    };
+
+    await expect(
+      purchaseOrderRepository.createOrGet({
+        userId: firstUser.id,
+        packageId,
+        idempotencyKey: "phase2:purchase:conflict",
+        payment,
+      }),
+    ).resolves.toMatchObject({ kind: "created" });
+
+    await expect(
+      purchaseOrderRepository.createOrGet({
+        userId: secondUser.id,
+        packageId,
+        idempotencyKey: "phase2:purchase:conflict",
+        payment,
+      }),
+    ).resolves.toEqual({ kind: "conflict" });
+
+    const rows = await resource.db
+      .select({ userId: packagePurchaseOrders.userId })
+      .from(packagePurchaseOrders)
+      .where(
+        eq(
+          packagePurchaseOrders.idempotencyKey,
+          "phase2:purchase:conflict",
+        ),
+      );
+
+    expect(rows).toEqual([{ userId: firstUser.id }]);
   });
 
 });
