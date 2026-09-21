@@ -31,7 +31,7 @@ Payment  Energy   Secrets
  |        |         |
 TRON    EnergyProvider  SecretProvider
 Adapter     Adapter         Adapter
-      \       |       /
+      \\       |       /
           PostgreSQL
 ```
 
@@ -132,3 +132,9 @@ Code deployment must never automatically change Telegram profile fields such as 
 ## Current Phase 0 rule
 
 This document establishes boundaries only. It does not authorize production payment processing, signing, Energy delegation, refunds or wallet custody.
+
+## Persistence invariants
+
+Database-level payment, balance and Energy-order invariants are defined in [DATABASE_INVARIANTS.md](DATABASE_INVARIANTS.md).
+
+The PostgreSQL schema must enforce TXID uniqueness and non-negative count balances. Balance reservation/consumption/release must execute transactionally in the Service layer.
