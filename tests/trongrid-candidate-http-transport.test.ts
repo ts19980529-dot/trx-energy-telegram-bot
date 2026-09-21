@@ -10,6 +10,8 @@ const baseConfig: TronGridCandidateHttpTransportConfig = {
   timeoutMs: 5_000,
 };
 
+const TXID = "A".repeat(64);
+
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -80,6 +82,48 @@ describe("NodeFetchTronGridUsdtCandidateHttpTransport", () => {
     expect(requestedUrl?.searchParams.get("contract_address")).toBe(
       "TUSDT",
     );
+  });
+
+  it("queries confirmed transaction events so event_index can be resolved", async () => {
+    let requestedUrl: URL | undefined;
+
+    const transport = new NodeFetchTronGridUsdtCandidateHttpTransport(
+      baseConfig,
+      async (input) => {
+        requestedUrl = new URL(String(input));
+        return response({ data: [] });
+      },
+    );
+
+    await expect(
+      transport.listTransactionEvents({
+        transactionId: TXID,
+      }),
+    ).resolves.toMatchObject({ kind: "ok" });
+
+    expect(requestedUrl?.pathname).toBe(
+      `/v1/transactions/${TXID.toLowerCase()}/events`,
+    );
+    expect(requestedUrl?.searchParams.get("only_confirmed")).toBe("true");
+  });
+
+  it("rejects malformed transaction ids before any event lookup", () => {
+    let callCount = 0;
+    const transport = new NodeFetchTronGridUsdtCandidateHttpTransport(
+      baseConfig,
+      async () => {
+        callCount += 1;
+        return response({});
+      },
+    );
+
+    expect(() =>
+      transport.listTransactionEvents({
+        transactionId: "bad-txid",
+      }),
+    ).toThrow(/transactionId/);
+
+    expect(callCount).toBe(0);
   });
 
   it("adds TRON-PRO-API-KEY only when supplied", async () => {
