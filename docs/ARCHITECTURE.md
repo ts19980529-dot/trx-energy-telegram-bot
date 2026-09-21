@@ -71,6 +71,8 @@ Purchase-order payment economics are frozen before any chain evidence can be mat
 
 The first concrete purchase quote adapter is configuration-backed USDT only. It receives the payment destination, USDT token contract, required confirmation policy, and optional quote TTL through constructor configuration; none of these customer/runtime values are hard-coded in Core. The quoted atomic amount is copied exactly from the package's canonical USDT-micro price, with no floating-point conversion. If no TTL is explicitly configured, the quote has no expiry. TRX deliberately returns `unsupported_asset` from this adapter: a future TRX quote provider must supply an explicit positive atomic quote from an approved business rule or external pricing source rather than reusing or guessing the USDT rule.
 
+Purchase-order creation is an application service above the quote/payment contracts. It rechecks the active customer, loads only an enabled package, requests a quote, freezes the immutable payment snapshot, rejects already-expired quotes, and persists by a caller-supplied idempotency key. PostgreSQL is the final idempotency authority: creation uses the unique `package_purchase_orders.idempotency_key`, inserts the `created` row and transitions it to `waiting_payment` inside one transaction, and returns the existing row for an exact replay. Reusing the same idempotency key with any different immutable payload is an explicit conflict and never overwrites the original order. Persisted rows are converted back into `PaymentExpectation` only after the existing snapshot invariant validator accepts them.
+
 ### EnergyProvider
 
 All Energy delivery implementations must satisfy one provider contract.
