@@ -35,3 +35,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Export migration candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-drizzle-migration
+          path: drizzle/
+          if-no-files-found: error
+          retention-days: 1
