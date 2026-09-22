@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, lte } from "drizzle-orm";
 
 import type {
   UsdtReconciliationOrderRepository,
@@ -125,4 +125,59 @@ export class PostgresUsdtReconciliationOrderRepository
       };
     });
   }
+  async expireWaitingUsdtOrder(input: {
+    readonly purchaseOrderId: string;
+    readonly expiredAt: Date;
+  }): Promise<"expired" | "not_waiting" | "order_not_found"> {
+    if (
+      input.purchaseOrderId.trim().length === 0 ||
+      Number.isNaN(input.expiredAt.getTime())
+    ) {
+      throw new Error("Invalid USDT purchase-order expiry request");
+    }
+
+    return this.db.transaction(async (tx) => {
+      const [order] = await tx
+        .select({
+          status: packagePurchaseOrders.status,
+          quoteExpiresAt: packagePurchaseOrders.quoteExpiresAt,
+        })
+        .from(packagePurchaseOrders)
+        .where(eq(packagePurchaseOrders.id, input.purchaseOrderId))
+        .limit(1)
+        .for("update");
+
+      if (order === undefined) {
+        return "order_not_found";
+      }
+
+      if (
+        order.status !== "waiting_payment" ||
+        order.quoteExpiresAt === null ||
+        order.quoteExpiresAt.getTime() > input.expiredAt.getTime()
+      ) {
+        return "not_waiting";
+      }
+
+      const [expired] = await tx
+        .update(packagePurchaseOrders)
+        .set({
+          status: "expired",
+          updatedAt: new Date(input.expiredAt.getTime()),
+        })
+        .where(
+          and(
+            eq(packagePurchaseOrders.id, input.purchaseOrderId),
+            eq(packagePurchaseOrders.status, "waiting_payment"),
+            lte(packagePurchaseOrders.quoteExpiresAt, input.expiredAt),
+          ),
+        )
+        .returning({ status: packagePurchaseOrders.status });
+
+      return expired?.status === "expired"
+        ? "expired"
+        : "not_waiting";
+    });
+  }
+
 }

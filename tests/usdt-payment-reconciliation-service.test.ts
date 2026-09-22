@@ -35,7 +35,7 @@ function order(
       requiredConfirmations: 2,
     },
     createdAt: new Date("2026-09-22T02:00:00.000Z"),
-    quoteExpiresAt: null,
+    quoteExpiresAt: new Date("2026-09-22T02:30:00.000Z"),
     ...overrides,
   };
 }
@@ -62,6 +62,8 @@ function candidate(
 }
 
 class FakeOrders implements UsdtReconciliationOrderRepository {
+  readonly expiredOrderIds: string[] = [];
+
   constructor(
     private readonly rows: readonly UsdtReconciliationOrder[],
   ) {}
@@ -70,6 +72,30 @@ class FakeOrders implements UsdtReconciliationOrderRepository {
     readonly UsdtReconciliationOrder[]
   > {
     return this.rows;
+  }
+
+  async expireWaitingUsdtOrder(input: {
+    readonly purchaseOrderId: string;
+    readonly expiredAt: Date;
+  }): Promise<"expired" | "not_waiting" | "order_not_found"> {
+    const row = this.rows.find(
+      (candidate) => candidate.id === input.purchaseOrderId,
+    );
+
+    if (row === undefined) {
+      return "order_not_found";
+    }
+
+    if (
+      row.status !== "waiting_payment" ||
+      row.quoteExpiresAt === null ||
+      row.quoteExpiresAt.getTime() > input.expiredAt.getTime()
+    ) {
+      return "not_waiting";
+    }
+
+    this.expiredOrderIds.push(row.id);
+    return "expired";
   }
 }
 
@@ -158,8 +184,9 @@ function service(input?: {
   const finality = new FakeFinality(input?.finality);
   const lifecycle = new FakeLifecycle();
   const credits = new FakeCredits();
+  const orders = new FakeOrders(input?.rows ?? [order()]);
   const instance = new UsdtPaymentReconciliationService(
-    new FakeOrders(input?.rows ?? [order()]),
+    orders,
     detector,
     finality,
     lifecycle,
@@ -174,6 +201,7 @@ function service(input?: {
     finality,
     lifecycle,
     credits,
+    orders,
   };
 }
 
@@ -316,20 +344,99 @@ describe("UsdtPaymentReconciliationService", () => {
     expect(lifecycle.observations).toHaveLength(0);
   });
 
-  it("fails closed for active expiring quotes until expiry reconciliation is implemented", async () => {
-    const { instance } = service({
-      rows: [
-        order({
-          quoteExpiresAt: new Date(
-            "2026-09-22T02:15:00.000Z",
-          ),
-        }),
-      ],
+  it("expires an overdue waiting order only after scanning through its payment deadline", async () => {
+    const expiring = order({
+      quoteExpiresAt: new Date("2026-09-22T02:15:00.000Z"),
+    });
+    const { instance, detector, orders } = service({
+      rows: [expiring],
+      pages: [{ observations: [] }],
     });
 
-    await expect(instance.runOnce()).rejects.toEqual(
+    await expect(
+      instance.runOnce(new Date("2026-09-22T02:20:00.000Z")),
+    ).resolves.toMatchObject({
+      ordersInspected: 1,
+      namespacesScanned: 1,
+      pagesScanned: 1,
+      candidatesMatched: 0,
+    });
+
+    expect(detector.requests).toEqual([
+      {
+        asset: "USDT",
+        tokenContractAddress: TOKEN,
+        toAddress: DESTINATION,
+        minTimestampMs: Date.parse("2026-09-22T02:00:00.000Z"),
+        maxTimestampMs: Date.parse("2026-09-22T02:15:00.000Z"),
+      },
+    ]);
+    expect(orders.expiredOrderIds).toEqual([expiring.id]);
+  });
+
+  it("keeps a payment made before the deadline eligible even when finality is still pending after expiry", async () => {
+    const expiring = order({
+      quoteExpiresAt: new Date("2026-09-22T02:15:00.000Z"),
+    });
+    const timely = candidate({
+      blockTimestamp: new Date("2026-09-22T02:14:00.000Z"),
+    });
+    const {
+      instance,
+      lifecycle,
+      finality,
+      orders,
+    } = service({
+      rows: [expiring],
+      pages: [{ observations: [timely] }],
+    });
+
+    await expect(
+      instance.runOnce(new Date("2026-09-22T02:20:00.000Z")),
+    ).resolves.toMatchObject({
+      candidatesMatched: 1,
+      finalityChecks: 1,
+      creditsCreated: 0,
+    });
+
+    expect(lifecycle.observations).toHaveLength(1);
+    expect(finality.identities).toHaveLength(1);
+    expect(orders.expiredOrderIds).toHaveLength(0);
+  });
+
+  it("does not accept a transfer whose block timestamp is after the order deadline", async () => {
+    const expiring = order({
+      quoteExpiresAt: new Date("2026-09-22T02:15:00.000Z"),
+    });
+    const late = candidate({
+      blockTimestamp: new Date("2026-09-22T02:15:01.000Z"),
+    });
+    const { instance, lifecycle, orders } = service({
+      rows: [expiring],
+      pages: [{ observations: [late] }],
+    });
+
+    await expect(
+      instance.runOnce(new Date("2026-09-22T02:20:00.000Z")),
+    ).resolves.toMatchObject({
+      candidatesMatched: 0,
+      finalityChecks: 0,
+    });
+
+    expect(lifecycle.observations).toHaveLength(0);
+    expect(orders.expiredOrderIds).toEqual([expiring.id]);
+  });
+
+  it("fails closed when a reconcilable order has no bounded expiry", async () => {
+    const { instance } = service({
+      rows: [order({ quoteExpiresAt: null })],
+    });
+
+    await expect(
+      instance.runOnce(new Date("2026-09-22T02:10:00.000Z")),
+    ).rejects.toEqual(
       new UsdtPaymentReconciliationError(
-        "quote_expiry_runtime_not_supported",
+        "quote_expiry_missing_or_invalid",
       ),
     );
   });

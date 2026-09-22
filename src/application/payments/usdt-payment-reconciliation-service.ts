@@ -25,6 +25,11 @@ export interface UsdtReconciliationOrderRepository {
   listReconcilableUsdtOrders(
     limit: number,
   ): Promise<readonly UsdtReconciliationOrder[]>;
+
+  expireWaitingUsdtOrder(input: {
+    readonly purchaseOrderId: string;
+    readonly expiredAt: Date;
+  }): Promise<"expired" | "not_waiting" | "order_not_found">;
 }
 
 export type PaymentLifecycleWriteResult =
@@ -126,9 +131,13 @@ function ensureUsdtOrder(order: UsdtReconciliationOrder): void {
     );
   }
 
-  if (order.quoteExpiresAt !== null) {
+  if (
+    order.quoteExpiresAt === null ||
+    !validDate(order.quoteExpiresAt) ||
+    order.quoteExpiresAt.getTime() <= order.createdAt.getTime()
+  ) {
     throw new UsdtPaymentReconciliationError(
-      "quote_expiry_runtime_not_supported",
+      "quote_expiry_missing_or_invalid",
     );
   }
 }
@@ -147,9 +156,20 @@ function candidateWithinOrderWindow(
     );
   }
 
+  if (order.quoteExpiresAt === null) {
+    throw new UsdtPaymentReconciliationError(
+      "quote_expiry_missing_or_invalid",
+    );
+  }
+
+  const upperBoundMs = Math.min(
+    scanStartedAt.getTime(),
+    order.quoteExpiresAt.getTime(),
+  );
+
   return (
     observation.blockTimestamp.getTime() >= order.createdAt.getTime() &&
-    observation.blockTimestamp.getTime() <= scanStartedAt.getTime()
+    observation.blockTimestamp.getTime() <= upperBoundMs
   );
 }
 
@@ -213,28 +233,22 @@ export class UsdtPaymentReconciliationService {
       creditsCreated += await this.creditOrThrow(order.id);
     }
 
-    const activeOrders = orders.filter(
-      (order) => order.status !== "paid",
-    );
-    const groups = new Map<string, UsdtReconciliationOrder[]>();
-
-    for (const order of activeOrders) {
-      const key = namespaceKey(order.expectation);
-      const group = groups.get(key) ?? [];
-      group.push(order);
-      groups.set(key, group);
-    }
-
     let pagesScanned = 0;
     let candidatesMatched = 0;
     let finalityChecks = 0;
+    let namespacesScanned = 0;
 
-    for (const group of groups.values()) {
+    const scanOrders = async (
+      group: readonly UsdtReconciliationOrder[],
+      maxTimestampMs: number,
+    ): Promise<ReadonlySet<string>> => {
       const first = group[0];
 
       if (first === undefined) {
-        continue;
+        return new Set<string>();
       }
+
+      namespacesScanned += 1;
 
       const tokenContractAddress =
         first.expectation.tokenContractAddress;
@@ -276,6 +290,7 @@ export class UsdtPaymentReconciliationService {
 
       let cursor: string | undefined;
       const seenCursors = new Set<string>();
+      const matchedOrderIds = new Set<string>();
 
       for (
         let pageIndex = 0;
@@ -287,7 +302,7 @@ export class UsdtPaymentReconciliationService {
           tokenContractAddress,
           toAddress: first.expectation.toAddress,
           minTimestampMs,
-          maxTimestampMs: scanStartedAt.getTime(),
+          maxTimestampMs,
           ...(cursor === undefined ? {} : { cursor }),
         });
 
@@ -321,6 +336,7 @@ export class UsdtPaymentReconciliationService {
           }
 
           candidatesMatched += 1;
+          matchedOrderIds.add(order.id);
 
           const candidateState = await this.applyOrThrow(
             order.id,
@@ -382,11 +398,83 @@ export class UsdtPaymentReconciliationService {
           "scan_page_capacity_exceeded",
         );
       }
+
+      return matchedOrderIds;
+    };
+
+    const overdueWaitingOrders = orders.filter(
+      (order) =>
+        order.status === "waiting_payment" &&
+        order.quoteExpiresAt !== null &&
+        order.quoteExpiresAt.getTime() <= scanStartedAt.getTime(),
+    );
+    const overdueOrderIds = new Set(
+      overdueWaitingOrders.map((order) => order.id),
+    );
+
+    for (const order of overdueWaitingOrders) {
+      if (order.quoteExpiresAt === null) {
+        throw new UsdtPaymentReconciliationError(
+          "quote_expiry_missing_or_invalid",
+        );
+      }
+
+      const matched = await scanOrders(
+        [order],
+        order.quoteExpiresAt.getTime(),
+      );
+
+      if (matched.has(order.id)) {
+        continue;
+      }
+
+      const expired = await this.orders.expireWaitingUsdtOrder({
+        purchaseOrderId: order.id,
+        expiredAt: scanStartedAt,
+      });
+
+      if (expired === "order_not_found") {
+        throw new UsdtPaymentReconciliationError(
+          "expiry_order_not_found",
+        );
+      }
+    }
+
+    const activeOrders = orders.filter(
+      (order) =>
+        order.status !== "paid" &&
+        !overdueOrderIds.has(order.id),
+    );
+    const groups = new Map<string, UsdtReconciliationOrder[]>();
+
+    for (const order of activeOrders) {
+      const key = namespaceKey(order.expectation);
+      const group = groups.get(key) ?? [];
+      group.push(order);
+      groups.set(key, group);
+    }
+
+    for (const group of groups.values()) {
+      const upperBounds = group.map((order) => {
+        if (order.quoteExpiresAt === null) {
+          throw new UsdtPaymentReconciliationError(
+            "quote_expiry_missing_or_invalid",
+          );
+        }
+
+        return Math.min(
+          scanStartedAt.getTime(),
+          order.quoteExpiresAt.getTime(),
+        );
+      });
+      const maxTimestampMs = Math.max(...upperBounds);
+
+      await scanOrders(group, maxTimestampMs);
     }
 
     return {
       ordersInspected: orders.length,
-      namespacesScanned: groups.size,
+      namespacesScanned,
       pagesScanned,
       candidatesMatched,
       finalityChecks,

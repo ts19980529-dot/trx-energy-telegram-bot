@@ -16,6 +16,7 @@ export interface UsdtPaymentRuntimeConfig {
   readonly tokenContractAddress: string;
   readonly requiredConfirmations: number;
   readonly attributionMaxOffsetAtomic: bigint;
+  readonly quoteTtlMs: number;
   readonly reconciliation: UsdtReconciliationRuntimeConfig;
 }
 
@@ -32,6 +33,7 @@ const USDT_REQUIRED_KEYS = [
   "USDT_TOKEN_CONTRACT_ADDRESS",
   "USDT_REQUIRED_CONFIRMATIONS",
   "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
+  "USDT_QUOTE_TTL_MS",
   "USDT_TRON_GRID_BASE_URL",
   "USDT_TRON_HEAD_BASE_URL",
   "USDT_TRON_SOLIDIFIED_BASE_URL",
@@ -97,16 +99,9 @@ function parseUsdtPaymentConfig(
   const configuredKeys = USDT_REQUIRED_KEYS.filter(
     (key) => trimmed(env, key) !== undefined,
   );
-  const quoteTtl = trimmed(env, "USDT_QUOTE_TTL_MS");
 
-  if (configuredKeys.length === 0 && quoteTtl === undefined) {
+  if (configuredKeys.length === 0) {
     return undefined;
-  }
-
-  if (quoteTtl !== undefined) {
-    throw new Error(
-      "USDT_QUOTE_TTL_MS is not supported until payment expiry reconciliation is implemented",
-    );
   }
 
   const missingKeys = USDT_REQUIRED_KEYS.filter(
@@ -146,6 +141,10 @@ function parseUsdtPaymentConfig(
         "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
       ),
       "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
+    ),
+    quoteTtlMs: parsePositiveSafeInteger(
+      requiredValue(env, "USDT_QUOTE_TTL_MS"),
+      "USDT_QUOTE_TTL_MS",
     ),
     reconciliation: {
       tronGridBaseUrl: requiredValue(

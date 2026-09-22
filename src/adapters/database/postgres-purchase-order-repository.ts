@@ -81,17 +81,6 @@ function toRecord(row: PurchaseOrderRow): PurchaseOrderRecord {
   };
 }
 
-function sameTimestamp(
-  left: Date | null,
-  right: Date | null,
-): boolean {
-  if (left === null || right === null) {
-    return left === right;
-  }
-
-  return left.getTime() === right.getTime();
-}
-
 function samePayload(
   row: PurchaseOrderRow,
   input: PurchaseOrderPersistenceInput,
@@ -111,8 +100,7 @@ function samePayload(
     row.paymentTokenContractAddressSnapshot ===
       payment.paymentTokenContractAddressSnapshot &&
     row.requiredConfirmationsSnapshot ===
-      payment.requiredConfirmationsSnapshot &&
-    sameTimestamp(row.quoteExpiresAt, payment.quoteExpiresAt);
+      payment.requiredConfirmationsSnapshot;
 
   if (!commonMatches) {
     return false;
