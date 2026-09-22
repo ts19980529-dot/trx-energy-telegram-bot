@@ -384,6 +384,19 @@ export class PostgresPurchaseOrderRepository
         }
 
         if (candidateAmount > maximumAmount) {
+          const existing = await findExisting();
+
+          if (existing !== undefined) {
+            if (!samePayload(existing, input)) {
+              return { kind: "conflict" };
+            }
+
+            return {
+              kind: "existing",
+              order: toRecord(existing),
+            };
+          }
+
           return {
             kind: "conflict",
             reason: "attribution_unavailable",
