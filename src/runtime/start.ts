@@ -107,6 +107,7 @@ async function main(): Promise<void> {
     databaseUrl,
     tronApiKey,
   } = await loadRuntimeSecrets(secretProvider, {
+    env: process.env,
     nodeEnv: process.env.NODE_ENV,
     usdtEnabled: config.usdtPayment !== undefined,
   });
