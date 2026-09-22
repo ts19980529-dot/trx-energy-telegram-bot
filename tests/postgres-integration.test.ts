@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PostgresPackageCreditRepository } from "../src/adapters/database/postgres-package-credit-repository.js";
 import { PostgresPaymentLifecycleRepository } from "../src/adapters/database/postgres-payment-lifecycle-repository.js";
+import { PostgresUsdtPaymentReconciliationOrderRepository } from "../src/adapters/database/postgres-usdt-payment-reconciliation-order-repository.js";
 import {
   PostgresPurchaseOrderCustomerRepository,
   PostgresPurchaseOrderRepository,
@@ -39,6 +40,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let purchaseOrderCustomerRepository: PostgresPurchaseOrderCustomerRepository;
   let paymentLifecycleRepository: PostgresPaymentLifecycleRepository;
   let packageCreditRepository: PostgresPackageCreditRepository;
+  let paymentReconciliationOrderRepository: PostgresUsdtPaymentReconciliationOrderRepository;
 
   beforeAll(async () => {
     resource = createPostgresResource(TEST_DATABASE_URL ?? "");
@@ -62,6 +64,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       new PostgresPaymentLifecycleRepository(resource.db);
     packageCreditRepository =
       new PostgresPackageCreditRepository(resource.db);
+    paymentReconciliationOrderRepository =
+      new PostgresUsdtPaymentReconciliationOrderRepository(resource.db);
   });
 
   afterAll(async () => {
@@ -1695,6 +1699,72 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       );
 
     expect(targetLedgerRows).toHaveLength(0);
+  });
+
+
+  it("lists only active USDT purchase orders for payment reconciliation with exact frozen expectations", async () => {
+    const user = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_021n,
+      username: "phase3_reconciliation_order",
+    });
+    const packageId = "f1111111-1111-4111-8111-111111111111";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase3_reconciliation_package",
+        count: 10,
+        priceUsdtMicros: 17_000_000n,
+        enabled: true,
+        sortOrder: 150,
+      })
+      .onConflictDoNothing();
+
+    const created = await purchaseOrderRepository.createOrGet({
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase3:reconciliation:active",
+      payment: {
+        packageCodeSnapshot: "phase3_reconciliation_package",
+        countSnapshot: 10,
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot:
+          "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+        paymentTokenContractAddressSnapshot:
+          "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 17_000_000n,
+        quoteExpiresAt: null,
+      },
+      maxUsdtAttributionOffsetAtomic: 100n,
+    });
+
+    if (created.kind === "conflict") {
+      throw new Error("Unexpected reconciliation order conflict");
+    }
+
+    const rows =
+      await paymentReconciliationOrderRepository.listReconcilableUsdtOrders(
+        1_000,
+      );
+    const row = rows.find((item) => item.id === created.order.id);
+
+    expect(row).toMatchObject({
+      id: created.order.id,
+      status: "waiting_payment",
+      expectation: {
+        asset: "USDT",
+        tokenContractAddress:
+          "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        toAddress: "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+        amountAtomic: created.order.expectation.amountAtomic,
+        requiredConfirmations: 2,
+      },
+      quoteExpiresAt: null,
+    });
+    expect(row?.createdAt).toBeInstanceOf(Date);
   });
 
 });
