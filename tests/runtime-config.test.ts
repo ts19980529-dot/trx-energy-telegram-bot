@@ -82,13 +82,13 @@ describe("parseRuntimeConfig", () => {
     ).toThrow(/USDT payment configuration is incomplete/);
   });
 
-  it("refuses quote TTL until expiry reconciliation is implemented", () => {
-    expect(() =>
-      parseRuntimeConfig({
-        ...completeUsdtConfig,
-        USDT_QUOTE_TTL_MS: "900000",
-      }),
-    ).toThrow(/expiry reconciliation/);
+  it("requires a positive quote TTL for bounded reconciliation", () => {
+    const { USDT_QUOTE_TTL_MS: _ttl, ...withoutTtl } =
+      completeUsdtConfig;
+
+    expect(() => parseRuntimeConfig(withoutTtl)).toThrow(
+      /USDT payment configuration is incomplete/,
+    );
   });
 
   it.each([
