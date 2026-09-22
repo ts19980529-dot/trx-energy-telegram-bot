@@ -1,4 +1,4 @@
-export type SecretProviderKind = "environment";
+export type SecretProviderKind = "environment" | "1password";
 
 export interface UsdtReconciliationRuntimeConfig {
   readonly tronGridBaseUrl: string;
@@ -181,15 +181,26 @@ function parseUsdtPaymentConfig(
   };
 }
 
-export function parseRuntimeConfig(
+export function parseSecretProviderKind(
   env: NodeJS.ProcessEnv,
-): RuntimeConfig {
-  const secretProviderRaw = env.SECRET_PROVIDER?.trim() || "environment";
+): SecretProviderKind {
+  const secretProviderRaw =
+    env.SECRET_PROVIDER?.trim() || "environment";
 
-  if (secretProviderRaw !== "environment") {
+  if (
+    secretProviderRaw !== "environment" &&
+    secretProviderRaw !== "1password"
+  ) {
     throw new Error("Configured SecretProvider is not implemented");
   }
 
+  return secretProviderRaw;
+}
+
+export function parseRuntimeConfig(
+  env: NodeJS.ProcessEnv,
+): RuntimeConfig {
+  const secretProvider = parseSecretProviderKind(env);
   const superAdminIdRaw = env.SUPER_ADMIN_ID?.trim();
   let superAdminId: bigint | undefined;
 
@@ -208,7 +219,7 @@ export function parseRuntimeConfig(
   const usdtPayment = parseUsdtPaymentConfig(env);
 
   return {
-    secretProvider: "environment",
+    secretProvider,
     ...(superAdminId === undefined ? {} : { superAdminId }),
     ...(usdtPayment === undefined ? {} : { usdtPayment }),
   };
