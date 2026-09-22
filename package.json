@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "check": "npm run typecheck && npm run build && npm test",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/runtime/start.js"
+    "start": "node dist/runtime/start.js",
+    "db:migrate": "node dist/runtime/migrate.js"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
