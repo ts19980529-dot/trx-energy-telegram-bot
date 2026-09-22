@@ -22,12 +22,18 @@ import { AdminAccessService } from "../src/application/telegram/admin-access-ser
 import {
   adminAccounts,
   balanceLedger,
+  energyOptions,
   energyPackages,
   packageBalances,
   packagePurchaseOrders,
   paymentTransactions,
   users,
 } from "../src/db/schema.js";
+import {
+  catalogEnergyOptions,
+  catalogPackages,
+} from "../src/config/catalog.js";
+import { bootstrapCatalogIfNeeded } from "../src/runtime/catalog-bootstrap.js";
 
 const EXPECTED_TEST_DATABASE = "trx_energy_phase1_test";
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -76,6 +82,64 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     if (resource !== undefined) {
       await resource.close();
     }
+  });
+
+  it("bootstraps the client catalog exactly once without overwriting initialized data", async () => {
+    await expect(
+      bootstrapCatalogIfNeeded(resource.db),
+    ).resolves.toBe("initialized");
+
+    await expect(
+      bootstrapCatalogIfNeeded(resource.db),
+    ).resolves.toBe("already_initialized");
+
+    const packages = await resource.db
+      .select({
+        code: energyPackages.code,
+        count: energyPackages.count,
+        priceUsdtMicros: energyPackages.priceUsdtMicros,
+        enabled: energyPackages.enabled,
+        sortOrder: energyPackages.sortOrder,
+      })
+      .from(energyPackages);
+
+    expect(
+      packages
+        .filter((item) =>
+          catalogPackages.some((expected) => expected.code === item.code),
+        )
+        .sort((left, right) => left.sortOrder - right.sortOrder),
+    ).toEqual(
+      catalogPackages.map((item) => ({
+        code: item.code,
+        count: item.count,
+        priceUsdtMicros: item.priceUsdtMicros,
+        enabled: item.enabled,
+        sortOrder: item.sortOrder,
+      })),
+    );
+
+    const options = await resource.db
+      .select({
+        code: energyOptions.code,
+        energyAmount: energyOptions.energyAmount,
+        countCost: energyOptions.countCost,
+        enabled: energyOptions.enabled,
+        sortOrder: energyOptions.sortOrder,
+      })
+      .from(energyOptions);
+
+    expect(
+      options.sort((left, right) => left.sortOrder - right.sortOrder),
+    ).toEqual(
+      catalogEnergyOptions.map((item) => ({
+        code: item.code,
+        energyAmount: item.energyAmount,
+        countCost: item.countCost,
+        enabled: item.enabled,
+        sortOrder: item.sortOrder,
+      })),
+    );
   });
 
   it("applies migrations and keeps concurrent /start onboarding idempotent", async () => {
