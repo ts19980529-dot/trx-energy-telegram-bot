@@ -166,7 +166,7 @@ async function main(): Promise<void> {
           tokenContractAddress,
           requiredConfirmations:
             config.usdtPayment.requiredConfirmations,
-          quoteTtlMs: null,
+          quoteTtlMs: config.usdtPayment.quoteTtlMs,
         }),
         new PostgresPurchaseOrderRepository(postgres.db),
         config.usdtPayment.attributionMaxOffsetAtomic,
