@@ -1,4 +1,5 @@
 import { EnvironmentSecretProvider } from "../adapters/secrets/environment-secret-provider.js";
+import { InfisicalSecretProvider } from "../adapters/secrets/infisical-secret-provider.js";
 import type {
   SecretName,
   SecretProvider,
@@ -24,15 +25,51 @@ async function requireSecret(
   return value;
 }
 
+function requiredInfisicalBootstrapValue(
+  env: NodeJS.ProcessEnv,
+  key: string,
+): string {
+  const value = env[key]?.trim();
+
+  if (value === undefined || value === "") {
+    throw new Error(
+      `${key} is required when SECRET_PROVIDER=infisical`,
+    );
+  }
+
+  return value;
+}
+
 export function createSecretProvider(
   kind: SecretProviderKind,
   env: NodeJS.ProcessEnv,
 ): SecretProvider {
-  if (kind !== "environment") {
-    throw new Error("Configured SecretProvider is not implemented");
+  if (kind === "environment") {
+    return new EnvironmentSecretProvider(env);
   }
 
-  return new EnvironmentSecretProvider(env);
+  return new InfisicalSecretProvider({
+    siteUrl:
+      env.INFISICAL_SITE_URL?.trim() ||
+      "https://app.infisical.com",
+    projectId: requiredInfisicalBootstrapValue(
+      env,
+      "INFISICAL_PROJECT_ID",
+    ),
+    environment: requiredInfisicalBootstrapValue(
+      env,
+      "INFISICAL_ENVIRONMENT",
+    ),
+    secretPath: env.INFISICAL_SECRET_PATH?.trim() || "/",
+    clientId: requiredInfisicalBootstrapValue(
+      env,
+      "INFISICAL_CLIENT_ID",
+    ),
+    clientSecret: requiredInfisicalBootstrapValue(
+      env,
+      "INFISICAL_CLIENT_SECRET",
+    ),
+  });
 }
 
 export async function loadRuntimeSecrets(

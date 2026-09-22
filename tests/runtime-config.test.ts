@@ -26,6 +26,14 @@ describe("parseRuntimeConfig", () => {
     });
   });
 
+  it("accepts the Infisical SecretProvider", () => {
+    expect(
+      parseRuntimeConfig({ SECRET_PROVIDER: "infisical" }),
+    ).toEqual({
+      secretProvider: "infisical",
+    });
+  });
+
   it("accepts a positive numeric SUPER_ADMIN_ID", () => {
     expect(
       parseRuntimeConfig({

@@ -1,4 +1,4 @@
-export type SecretProviderKind = "environment";
+export type SecretProviderKind = "environment" | "infisical";
 
 export interface UsdtReconciliationRuntimeConfig {
   readonly tronGridBaseUrl: string;
@@ -186,7 +186,10 @@ export function parseSecretProviderKind(
   const secretProviderRaw =
     env.SECRET_PROVIDER?.trim() || "environment";
 
-  if (secretProviderRaw !== "environment") {
+  if (
+    secretProviderRaw !== "environment" &&
+    secretProviderRaw !== "infisical"
+  ) {
     throw new Error("Configured SecretProvider is not implemented");
   }
 
