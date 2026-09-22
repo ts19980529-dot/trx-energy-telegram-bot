@@ -64,8 +64,11 @@ class FakeOrderRepository implements PurchaseOrderRepository {
   input?: PurchaseOrderPersistenceInput;
 
   constructor(
-    private readonly mode: "created" | "existing" | "conflict" =
-      "created",
+    private readonly mode:
+      | "created"
+      | "existing"
+      | "conflict"
+      | "attribution_unavailable" = "created",
   ) {}
 
   async createOrGet(input: PurchaseOrderPersistenceInput) {
@@ -73,6 +76,10 @@ class FakeOrderRepository implements PurchaseOrderRepository {
 
     if (this.mode === "conflict") {
       return { kind: "conflict" as const };
+    }
+
+    if (this.mode === "attribution_unavailable") {
+      return { kind: "attribution_unavailable" as const };
     }
 
     const expectation =
@@ -116,7 +123,12 @@ function service(options?: {
   denyUser?: boolean;
   packageAvailable?: boolean;
   quote?: PurchasePaymentQuoteResult;
-  orderMode?: "created" | "existing" | "conflict";
+  orderMode?:
+    | "created"
+    | "existing"
+    | "conflict"
+    | "attribution_unavailable";
+  maxOffsetAtomic?: bigint;
 }) {
   const orders = new FakeOrderRepository(
     options?.orderMode ?? "created",
@@ -134,6 +146,7 @@ function service(options?: {
     ),
     new FakeQuoteProvider(options?.quote ?? readyQuote()),
     orders,
+    options?.maxOffsetAtomic ?? 9_999n,
   );
 
   return { instance, orders };
@@ -176,6 +189,9 @@ describe("PurchaseOrderCreationService", () => {
     expect(orders.input?.idempotencyKey).toBe(
       "telegram:callback-123",
     );
+    expect(
+      orders.input?.maxUsdtAttributionOffsetAtomic,
+    ).toBe(9_999n);
   });
 
   it("denies unknown or blocked customers before package or quote work", async () => {
@@ -256,6 +272,22 @@ describe("PurchaseOrderCreationService", () => {
     await expect(instance.create(validInput)).resolves.toEqual({
       kind: "idempotency_conflict",
     });
+  });
+
+  it("surfaces payment-attribution exhaustion without changing the quote contract", async () => {
+    const { instance } = service({
+      orderMode: "attribution_unavailable",
+    });
+
+    await expect(instance.create(validInput)).resolves.toEqual({
+      kind: "payment_attribution_unavailable",
+    });
+  });
+
+  it("rejects a negative configured USDT attribution range", () => {
+    expect(() =>
+      service({ maxOffsetAtomic: -1n }),
+    ).toThrow(/attribution max offset/i);
   });
 
   it("returns an existing order as an idempotent replay", async () => {

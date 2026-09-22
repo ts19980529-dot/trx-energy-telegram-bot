@@ -1,0 +1,1507 @@
+{
+  "id": "3af02f5e-81f7-4c72-927a-3b78210f9a62",
+  "prevId": "e1f4b2a0-7d6c-4d9f-8a3b-2f57c9e6b1a4",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.admin_accounts": {
+      "name": "admin_accounts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "admin_accounts_user_id_users_id_fk": {
+          "name": "admin_accounts_user_id_users_id_fk",
+          "tableFrom": "admin_accounts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "admin_accounts_user_id_unique": {
+          "name": "admin_accounts_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "admin_accounts_role_check": {
+          "name": "admin_accounts_role_check",
+          "value": "\"admin_accounts\".\"role\" in ('SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'VIEWER')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.audit_logs": {
+      "name": "audit_logs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "actor_telegram_user_id": {
+          "name": "actor_telegram_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "audit_logs_entity_idx": {
+          "name": "audit_logs_entity_idx",
+          "columns": [
+            {
+              "expression": "entity_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_logs_actor_created_idx": {
+          "name": "audit_logs_actor_created_idx",
+          "columns": [
+            {
+              "expression": "actor_telegram_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.balance_ledger": {
+      "name": "balance_ledger",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_transaction_id": {
+          "name": "payment_transaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "energy_consumption_order_id": {
+          "name": "energy_consumption_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "audit_log_id": {
+          "name": "audit_log_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "available_delta": {
+          "name": "available_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "reserved_delta": {
+          "name": "reserved_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "balance_ledger_user_created_idx": {
+          "name": "balance_ledger_user_created_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "balance_ledger_purchase_credit_order_unique": {
+          "name": "balance_ledger_purchase_credit_order_unique",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"balance_ledger\".\"reason\" = 'purchase_credit' and \"balance_ledger\".\"purchase_order_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "balance_ledger_purchase_credit_payment_unique": {
+          "name": "balance_ledger_purchase_credit_payment_unique",
+          "columns": [
+            {
+              "expression": "payment_transaction_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"balance_ledger\".\"reason\" = 'purchase_credit' and \"balance_ledger\".\"payment_transaction_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "balance_ledger_energy_reason_unique": {
+          "name": "balance_ledger_energy_reason_unique",
+          "columns": [
+            {
+              "expression": "energy_consumption_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "reason",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"balance_ledger\".\"energy_consumption_order_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "balance_ledger_user_id_users_id_fk": {
+          "name": "balance_ledger_user_id_users_id_fk",
+          "tableFrom": "balance_ledger",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "balance_ledger_purchase_order_id_package_purchase_orders_id_fk": {
+          "name": "balance_ledger_purchase_order_id_package_purchase_orders_id_fk",
+          "tableFrom": "balance_ledger",
+          "tableTo": "package_purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "balance_ledger_payment_transaction_id_payment_transactions_id_fk": {
+          "name": "balance_ledger_payment_transaction_id_payment_transactions_id_fk",
+          "tableFrom": "balance_ledger",
+          "tableTo": "payment_transactions",
+          "columnsFrom": [
+            "payment_transaction_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "balance_ledger_energy_consumption_order_id_energy_consumption_orders_id_fk": {
+          "name": "balance_ledger_energy_consumption_order_id_energy_consumption_orders_id_fk",
+          "tableFrom": "balance_ledger",
+          "tableTo": "energy_consumption_orders",
+          "columnsFrom": [
+            "energy_consumption_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "balance_ledger_audit_log_id_audit_logs_id_fk": {
+          "name": "balance_ledger_audit_log_id_audit_logs_id_fk",
+          "tableFrom": "balance_ledger",
+          "tableTo": "audit_logs",
+          "columnsFrom": [
+            "audit_log_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "balance_ledger_idempotency_key_unique": {
+          "name": "balance_ledger_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "balance_ledger_reason_check": {
+          "name": "balance_ledger_reason_check",
+          "value": "\"balance_ledger\".\"reason\" in (\n        'purchase_credit',\n        'energy_reserve',\n        'energy_consume',\n        'energy_release',\n        'admin_adjustment'\n      )"
+        },
+        "balance_ledger_nonzero_delta": {
+          "name": "balance_ledger_nonzero_delta",
+          "value": "\"balance_ledger\".\"available_delta\" <> 0 or \"balance_ledger\".\"reserved_delta\" <> 0"
+        },
+        "balance_ledger_delta_shape_check": {
+          "name": "balance_ledger_delta_shape_check",
+          "value": "(\n        \"balance_ledger\".\"reason\" = 'purchase_credit'\n        and \"balance_ledger\".\"available_delta\" > 0\n        and \"balance_ledger\".\"reserved_delta\" = 0\n      ) or (\n        \"balance_ledger\".\"reason\" = 'energy_reserve'\n        and \"balance_ledger\".\"available_delta\" < 0\n        and \"balance_ledger\".\"reserved_delta\" > 0\n        and \"balance_ledger\".\"available_delta\" + \"balance_ledger\".\"reserved_delta\" = 0\n      ) or (\n        \"balance_ledger\".\"reason\" = 'energy_consume'\n        and \"balance_ledger\".\"available_delta\" = 0\n        and \"balance_ledger\".\"reserved_delta\" < 0\n      ) or (\n        \"balance_ledger\".\"reason\" = 'energy_release'\n        and \"balance_ledger\".\"available_delta\" > 0\n        and \"balance_ledger\".\"reserved_delta\" < 0\n        and \"balance_ledger\".\"available_delta\" + \"balance_ledger\".\"reserved_delta\" = 0\n      ) or (\n        \"balance_ledger\".\"reason\" = 'admin_adjustment'\n        and \"balance_ledger\".\"available_delta\" <> 0\n        and \"balance_ledger\".\"reserved_delta\" = 0\n      )"
+        },
+        "balance_ledger_reference_check": {
+          "name": "balance_ledger_reference_check",
+          "value": "(\n        \"balance_ledger\".\"reason\" = 'purchase_credit'\n        and \"balance_ledger\".\"purchase_order_id\" is not null\n        and \"balance_ledger\".\"payment_transaction_id\" is not null\n        and \"balance_ledger\".\"energy_consumption_order_id\" is null\n        and \"balance_ledger\".\"audit_log_id\" is null\n      ) or (\n        \"balance_ledger\".\"reason\" in ('energy_reserve', 'energy_consume', 'energy_release')\n        and \"balance_ledger\".\"purchase_order_id\" is null\n        and \"balance_ledger\".\"payment_transaction_id\" is null\n        and \"balance_ledger\".\"energy_consumption_order_id\" is not null\n        and \"balance_ledger\".\"audit_log_id\" is null\n      ) or (\n        \"balance_ledger\".\"reason\" = 'admin_adjustment'\n        and \"balance_ledger\".\"purchase_order_id\" is null\n        and \"balance_ledger\".\"payment_transaction_id\" is null\n        and \"balance_ledger\".\"energy_consumption_order_id\" is null\n        and \"balance_ledger\".\"audit_log_id\" is not null\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.energy_consumption_orders": {
+      "name": "energy_consumption_orders",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "energy_option_id": {
+          "name": "energy_option_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "option_code_snapshot": {
+          "name": "option_code_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient_address": {
+          "name": "recipient_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "energy_amount": {
+          "name": "energy_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "count_cost": {
+          "name": "count_cost",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'created'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "energy_consumption_orders_user_status_idx": {
+          "name": "energy_consumption_orders_user_status_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "energy_consumption_orders_user_id_users_id_fk": {
+          "name": "energy_consumption_orders_user_id_users_id_fk",
+          "tableFrom": "energy_consumption_orders",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "energy_consumption_orders_energy_option_id_energy_options_id_fk": {
+          "name": "energy_consumption_orders_energy_option_id_energy_options_id_fk",
+          "tableFrom": "energy_consumption_orders",
+          "tableTo": "energy_options",
+          "columnsFrom": [
+            "energy_option_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "energy_consumption_orders_idempotency_key_unique": {
+          "name": "energy_consumption_orders_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "energy_consumption_orders_energy_positive": {
+          "name": "energy_consumption_orders_energy_positive",
+          "value": "\"energy_consumption_orders\".\"energy_amount\" > 0"
+        },
+        "energy_consumption_orders_count_cost_positive": {
+          "name": "energy_consumption_orders_count_cost_positive",
+          "value": "\"energy_consumption_orders\".\"count_cost\" > 0"
+        },
+        "energy_consumption_orders_status_check": {
+          "name": "energy_consumption_orders_status_check",
+          "value": "\"energy_consumption_orders\".\"status\" in ('created', 'reserved', 'dispatching', 'completed', 'delivery_failed', 'released', 'cancelled')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.energy_options": {
+      "name": "energy_options",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "energy_amount": {
+          "name": "energy_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "count_cost": {
+          "name": "count_cost",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "energy_options_code_unique": {
+          "name": "energy_options_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "energy_options_energy_positive": {
+          "name": "energy_options_energy_positive",
+          "value": "\"energy_options\".\"energy_amount\" > 0"
+        },
+        "energy_options_count_cost_positive": {
+          "name": "energy_options_count_cost_positive",
+          "value": "\"energy_options\".\"count_cost\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.energy_packages": {
+      "name": "energy_packages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "count": {
+          "name": "count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price_usdt_micros": {
+          "name": "price_usdt_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "energy_packages_code_unique": {
+          "name": "energy_packages_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "energy_packages_count_positive": {
+          "name": "energy_packages_count_positive",
+          "value": "\"energy_packages\".\"count\" > 0"
+        },
+        "energy_packages_price_positive": {
+          "name": "energy_packages_price_positive",
+          "value": "\"energy_packages\".\"price_usdt_micros\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.package_balances": {
+      "name": "package_balances",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "available_count": {
+          "name": "available_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "reserved_count": {
+          "name": "reserved_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "package_balances_user_id_users_id_fk": {
+          "name": "package_balances_user_id_users_id_fk",
+          "tableFrom": "package_balances",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "package_balances_available_nonnegative": {
+          "name": "package_balances_available_nonnegative",
+          "value": "\"package_balances\".\"available_count\" >= 0"
+        },
+        "package_balances_reserved_nonnegative": {
+          "name": "package_balances_reserved_nonnegative",
+          "value": "\"package_balances\".\"reserved_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.package_purchase_orders": {
+      "name": "package_purchase_orders",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "package_code_snapshot": {
+          "name": "package_code_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "count_snapshot": {
+          "name": "count_snapshot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price_usdt_micros_snapshot": {
+          "name": "price_usdt_micros_snapshot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payment_attribution_offset_atomic": {
+          "name": "payment_attribution_offset_atomic",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "payment_asset": {
+          "name": "payment_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payment_to_address_snapshot": {
+          "name": "payment_to_address_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payment_token_contract_address_snapshot": {
+          "name": "payment_token_contract_address_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "required_confirmations_snapshot": {
+          "name": "required_confirmations_snapshot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quoted_amount_atomic": {
+          "name": "quoted_amount_atomic",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quote_expires_at": {
+          "name": "quote_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'created'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "package_purchase_orders_user_status_idx": {
+          "name": "package_purchase_orders_user_status_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "package_purchase_orders_usdt_attribution_unique": {
+          "name": "package_purchase_orders_usdt_attribution_unique",
+          "columns": [
+            {
+              "expression": "payment_token_contract_address_snapshot",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "payment_to_address_snapshot",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "quoted_amount_atomic",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"package_purchase_orders\".\"payment_asset\" = 'USDT'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "package_purchase_orders_user_id_users_id_fk": {
+          "name": "package_purchase_orders_user_id_users_id_fk",
+          "tableFrom": "package_purchase_orders",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "package_purchase_orders_package_id_energy_packages_id_fk": {
+          "name": "package_purchase_orders_package_id_energy_packages_id_fk",
+          "tableFrom": "package_purchase_orders",
+          "tableTo": "energy_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "package_purchase_orders_idempotency_key_unique": {
+          "name": "package_purchase_orders_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "package_purchase_orders_count_positive": {
+          "name": "package_purchase_orders_count_positive",
+          "value": "\"package_purchase_orders\".\"count_snapshot\" > 0"
+        },
+        "package_purchase_orders_usdt_price_positive": {
+          "name": "package_purchase_orders_usdt_price_positive",
+          "value": "\"package_purchase_orders\".\"price_usdt_micros_snapshot\" > 0"
+        },
+        "package_purchase_orders_quote_positive": {
+          "name": "package_purchase_orders_quote_positive",
+          "value": "\"package_purchase_orders\".\"quoted_amount_atomic\" > 0"
+        },
+        "package_purchase_orders_asset_check": {
+          "name": "package_purchase_orders_asset_check",
+          "value": "\"package_purchase_orders\".\"payment_asset\" in ('USDT', 'TRX')"
+        },
+        "package_purchase_orders_payment_contract_check": {
+          "name": "package_purchase_orders_payment_contract_check",
+          "value": "(\n        (\"package_purchase_orders\".\"payment_asset\" = 'TRX' and \"package_purchase_orders\".\"payment_token_contract_address_snapshot\" is null)\n        or\n        (\"package_purchase_orders\".\"payment_asset\" = 'USDT' and \"package_purchase_orders\".\"payment_token_contract_address_snapshot\" is not null)\n      )"
+        },
+        "package_purchase_orders_usdt_quote_check": {
+          "name": "package_purchase_orders_usdt_quote_check",
+          "value": "\"package_purchase_orders\".\"payment_asset\" <> 'USDT'\n        or \"package_purchase_orders\".\"quoted_amount_atomic\"\n          = \"package_purchase_orders\".\"price_usdt_micros_snapshot\"\n          + \"package_purchase_orders\".\"payment_attribution_offset_atomic\""
+        },
+        "package_purchase_orders_confirmations_positive": {
+          "name": "package_purchase_orders_confirmations_positive",
+          "value": "\"package_purchase_orders\".\"required_confirmations_snapshot\" > 0"
+        },
+        "package_purchase_orders_status_check": {
+          "name": "package_purchase_orders_status_check",
+          "value": "\"package_purchase_orders\".\"status\" in ('created', 'waiting_payment', 'payment_detected', 'confirming', 'paid', 'credited', 'expired', 'failed')"
+        },
+        "package_purchase_orders_attribution_offset_nonnegative": {
+          "name": "package_purchase_orders_attribution_offset_nonnegative",
+          "value": "\"package_purchase_orders\".\"payment_attribution_offset_atomic\" >= 0"
+        },
+        "package_purchase_orders_trx_attribution_offset_zero": {
+          "name": "package_purchase_orders_trx_attribution_offset_zero",
+          "value": "\"package_purchase_orders\".\"payment_asset\" <> 'TRX'\n        or \"package_purchase_orders\".\"payment_attribution_offset_atomic\" = 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.payment_transactions": {
+      "name": "payment_transactions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "txid": {
+          "name": "txid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset": {
+          "name": "asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_contract_address": {
+          "name": "token_contract_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_index": {
+          "name": "event_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "from_address": {
+          "name": "from_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_address": {
+          "name": "to_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_atomic": {
+          "name": "amount_atomic",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "block_number": {
+          "name": "block_number",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "block_timestamp": {
+          "name": "block_timestamp",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmations": {
+          "name": "confirmations",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'detected'"
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "payment_transactions_purchase_order_idx": {
+          "name": "payment_transactions_purchase_order_idx",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payment_transactions_confirmed_order_unique": {
+          "name": "payment_transactions_confirmed_order_unique",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"payment_transactions\".\"status\" = 'confirmed' and \"payment_transactions\".\"purchase_order_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payment_transactions_txid_idx": {
+          "name": "payment_transactions_txid_idx",
+          "columns": [
+            {
+              "expression": "txid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payment_transactions_trx_txid_unique": {
+          "name": "payment_transactions_trx_txid_unique",
+          "columns": [
+            {
+              "expression": "txid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"payment_transactions\".\"asset\" = 'TRX'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payment_transactions_trc20_event_unique": {
+          "name": "payment_transactions_trc20_event_unique",
+          "columns": [
+            {
+              "expression": "token_contract_address",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "txid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"payment_transactions\".\"asset\" = 'USDT'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "payment_transactions_purchase_order_id_package_purchase_orders_id_fk": {
+          "name": "payment_transactions_purchase_order_id_package_purchase_orders_id_fk",
+          "tableFrom": "payment_transactions",
+          "tableTo": "package_purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "payment_transactions_asset_check": {
+          "name": "payment_transactions_asset_check",
+          "value": "\"payment_transactions\".\"asset\" in ('USDT', 'TRX')"
+        },
+        "payment_transactions_amount_positive": {
+          "name": "payment_transactions_amount_positive",
+          "value": "\"payment_transactions\".\"amount_atomic\" > 0"
+        },
+        "payment_transactions_confirmations_nonnegative": {
+          "name": "payment_transactions_confirmations_nonnegative",
+          "value": "\"payment_transactions\".\"confirmations\" >= 0"
+        },
+        "payment_transactions_status_check": {
+          "name": "payment_transactions_status_check",
+          "value": "\"payment_transactions\".\"status\" in ('detected', 'confirming', 'confirmed', 'rejected')"
+        },
+        "payment_transactions_contract_check": {
+          "name": "payment_transactions_contract_check",
+          "value": "(\n        (\"payment_transactions\".\"asset\" = 'TRX' and \"payment_transactions\".\"token_contract_address\" is null)\n        or\n        (\"payment_transactions\".\"asset\" = 'USDT' and \"payment_transactions\".\"token_contract_address\" is not null)\n      )"
+        },
+        "payment_transactions_event_position_check": {
+          "name": "payment_transactions_event_position_check",
+          "value": "(\n        (\"payment_transactions\".\"asset\" = 'TRX' and \"payment_transactions\".\"event_index\" is null)\n        or\n        (\n          \"payment_transactions\".\"asset\" = 'USDT'\n          and \"payment_transactions\".\"event_index\" is not null\n          and \"payment_transactions\".\"event_index\" >= 0\n        )\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.provider_deliveries": {
+      "name": "provider_deliveries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "energy_consumption_order_id": {
+          "name": "energy_consumption_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_name": {
+          "name": "provider_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_order_id": {
+          "name": "provider_order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "last_error_code": {
+          "name": "last_error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "provider_deliveries_provider_order_unique": {
+          "name": "provider_deliveries_provider_order_unique",
+          "columns": [
+            {
+              "expression": "provider_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "provider_deliveries_energy_consumption_order_id_energy_consumption_orders_id_fk": {
+          "name": "provider_deliveries_energy_consumption_order_id_energy_consumption_orders_id_fk",
+          "tableFrom": "provider_deliveries",
+          "tableTo": "energy_consumption_orders",
+          "columnsFrom": [
+            "energy_consumption_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "provider_deliveries_consumption_order_unique": {
+          "name": "provider_deliveries_consumption_order_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "energy_consumption_order_id"
+          ]
+        },
+        "provider_deliveries_idempotency_key_unique": {
+          "name": "provider_deliveries_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "provider_deliveries_status_check": {
+          "name": "provider_deliveries_status_check",
+          "value": "\"provider_deliveries\".\"status\" in (\n        'pending',\n        'accepted',\n        'processing',\n        'completed',\n        'failed',\n        'unknown'\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "default_tron_address": {
+          "name": "default_tron_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_telegram_user_id_unique": {
+          "name": "users_telegram_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "telegram_user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "users_status_check": {
+          "name": "users_status_check",
+          "value": "\"users\".\"status\" in ('active', 'blocked')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

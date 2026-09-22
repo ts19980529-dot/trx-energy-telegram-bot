@@ -22,6 +22,7 @@ export interface PurchaseOrderPaymentSnapshot {
   readonly packageCodeSnapshot: string;
   readonly countSnapshot: number;
   readonly priceUsdtMicrosSnapshot: bigint;
+  readonly paymentAttributionOffsetAtomic?: bigint;
   readonly paymentAsset: PaymentAsset;
   readonly paymentToAddressSnapshot: string;
   readonly paymentTokenContractAddressSnapshot: string | null;
@@ -34,6 +35,7 @@ export type PurchaseOrderPaymentInvalidReason =
   | "invalid_package_snapshot"
   | "invalid_quote"
   | "asset_contract_mismatch"
+  | "invalid_attribution_offset"
   | "usdt_amount_mismatch";
 
 export type PurchaseOrderPaymentContractResult =
@@ -77,6 +79,13 @@ function validatePersistedSnapshot(
     return "invalid_package_snapshot";
   }
 
+  const attributionOffset =
+    snapshot.paymentAttributionOffsetAtomic ?? 0n;
+
+  if (attributionOffset < 0n) {
+    return "invalid_attribution_offset";
+  }
+
   if (
     nonEmptyTrimmed(snapshot.paymentToAddressSnapshot) === undefined ||
     snapshot.quotedAmountAtomic <= 0n ||
@@ -93,6 +102,10 @@ function validatePersistedSnapshot(
       return "asset_contract_mismatch";
     }
 
+    if (attributionOffset !== 0n) {
+      return "invalid_attribution_offset";
+    }
+
     return undefined;
   }
 
@@ -103,7 +116,10 @@ function validatePersistedSnapshot(
     return "asset_contract_mismatch";
   }
 
-  if (snapshot.quotedAmountAtomic !== snapshot.priceUsdtMicrosSnapshot) {
+  if (
+    snapshot.quotedAmountAtomic !==
+    snapshot.priceUsdtMicrosSnapshot + attributionOffset
+  ) {
     return "usdt_amount_mismatch";
   }
 
@@ -128,9 +144,30 @@ export function paymentExpectationFromOrderSnapshot(
   };
 }
 
+export function withUsdtPaymentAttributionOffset(
+  snapshot: PurchaseOrderPaymentSnapshot,
+  offsetAtomic: bigint,
+): PurchaseOrderPaymentSnapshot | undefined {
+  if (snapshot.paymentAsset !== "USDT" || offsetAtomic < 0n) {
+    return undefined;
+  }
+
+  const attributed: PurchaseOrderPaymentSnapshot = {
+    ...snapshot,
+    paymentAttributionOffsetAtomic: offsetAtomic,
+    quotedAmountAtomic:
+      snapshot.priceUsdtMicrosSnapshot + offsetAtomic,
+  };
+
+  return validatePersistedSnapshot(attributed) === undefined
+    ? attributed
+    : undefined;
+}
+
 export function buildPurchaseOrderPaymentContract(input: {
   readonly package: PurchasePackageSnapshotInput;
   readonly quote: PurchasePaymentQuote;
+  readonly attributionOffsetAtomic?: bigint;
 }): PurchaseOrderPaymentContractResult {
   const packageCode = nonEmptyTrimmed(input.package.packageCode);
 
@@ -148,6 +185,14 @@ export function buildPurchaseOrderPaymentContract(input: {
 
   const toAddress = nonEmptyTrimmed(input.quote.toAddress);
   const expiresAt = validExpiry(input.quote.expiresAt);
+  const attributionOffset = input.attributionOffsetAtomic ?? 0n;
+
+  if (attributionOffset < 0n) {
+    return {
+      kind: "invalid",
+      reason: "invalid_attribution_offset",
+    };
+  }
 
   if (
     toAddress === undefined ||
@@ -165,6 +210,13 @@ export function buildPurchaseOrderPaymentContract(input: {
   let tokenContractAddress: string | null;
 
   if (input.quote.asset === "TRX") {
+    if (attributionOffset !== 0n) {
+      return {
+        kind: "invalid",
+        reason: "invalid_attribution_offset",
+      };
+    }
+
     if (input.quote.tokenContractAddress !== null) {
       return {
         kind: "invalid",
@@ -204,12 +256,16 @@ export function buildPurchaseOrderPaymentContract(input: {
     packageCodeSnapshot: packageCode,
     countSnapshot: input.package.count,
     priceUsdtMicrosSnapshot: input.package.priceUsdtMicros,
+    paymentAttributionOffsetAtomic: attributionOffset,
     paymentAsset: input.quote.asset,
     paymentToAddressSnapshot: toAddress,
     paymentTokenContractAddressSnapshot: tokenContractAddress,
     requiredConfirmationsSnapshot:
       input.quote.requiredConfirmations,
-    quotedAmountAtomic: input.quote.amountAtomic,
+    quotedAmountAtomic:
+      input.quote.asset === "USDT"
+        ? input.quote.amountAtomic + attributionOffset
+        : input.quote.amountAtomic,
     quoteExpiresAt: expiresAt ?? null,
   };
 

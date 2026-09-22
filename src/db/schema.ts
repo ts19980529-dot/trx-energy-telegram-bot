@@ -128,6 +128,12 @@ export const packagePurchaseOrders = pgTable(
     priceUsdtMicrosSnapshot: bigint("price_usdt_micros_snapshot", {
       mode: "bigint",
     }).notNull(),
+    paymentAttributionOffsetAtomic: bigint(
+      "payment_attribution_offset_atomic",
+      { mode: "bigint" },
+    )
+      .default(sql`0`)
+      .notNull(),
     paymentAsset: text("payment_asset").notNull(),
     paymentToAddressSnapshot: text("payment_to_address_snapshot").notNull(),
     paymentTokenContractAddressSnapshot: text(
@@ -154,6 +160,13 @@ export const packagePurchaseOrders = pgTable(
       table.userId,
       table.status,
     ),
+    uniqueIndex("package_purchase_orders_usdt_attribution_unique")
+      .on(
+        table.paymentTokenContractAddressSnapshot,
+        table.paymentToAddressSnapshot,
+        table.quotedAmountAtomic,
+      )
+      .where(sql`${table.paymentAsset} = 'USDT'`),
     check(
       "package_purchase_orders_count_positive",
       sql`${table.countSnapshot} > 0`,
@@ -165,6 +178,15 @@ export const packagePurchaseOrders = pgTable(
     check(
       "package_purchase_orders_quote_positive",
       sql`${table.quotedAmountAtomic} > 0`,
+    ),
+    check(
+      "package_purchase_orders_attribution_offset_nonnegative",
+      sql`${table.paymentAttributionOffsetAtomic} >= 0`,
+    ),
+    check(
+      "package_purchase_orders_trx_attribution_offset_zero",
+      sql`${table.paymentAsset} <> 'TRX'
+        or ${table.paymentAttributionOffsetAtomic} = 0`,
     ),
     check(
       "package_purchase_orders_asset_check",
@@ -181,7 +203,9 @@ export const packagePurchaseOrders = pgTable(
     check(
       "package_purchase_orders_usdt_quote_check",
       sql`${table.paymentAsset} <> 'USDT'
-        or ${table.quotedAmountAtomic} = ${table.priceUsdtMicrosSnapshot}`,
+        or ${table.quotedAmountAtomic}
+          = ${table.priceUsdtMicrosSnapshot}
+          + ${table.paymentAttributionOffsetAtomic}`,
     ),
     check(
       "package_purchase_orders_confirmations_positive",

@@ -35,6 +35,7 @@ describe("purchase-order payment contract", () => {
         packageCodeSnapshot: "energy-10",
         countSnapshot: 10,
         priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAttributionOffsetAtomic: 0n,
         paymentAsset: "USDT",
         paymentToAddressSnapshot:
           "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
@@ -78,6 +79,70 @@ describe("purchase-order payment contract", () => {
     ).toEqual({
       kind: "invalid",
       reason: "usdt_amount_mismatch",
+    });
+  });
+
+  it("applies an explicit non-negative USDT attribution offset without changing the canonical package price", () => {
+    const result = buildPurchaseOrderPaymentContract({
+      package: usdtPackage,
+      quote: {
+        asset: "USDT",
+        toAddress: "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+        tokenContractAddress:
+          "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        amountAtomic: 17_000_000n,
+        requiredConfirmations: 2,
+      },
+      attributionOffsetAtomic: 137n,
+    });
+
+    expect(result).toMatchObject({
+      kind: "ready",
+      snapshot: {
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAttributionOffsetAtomic: 137n,
+        quotedAmountAtomic: 17_000_137n,
+      },
+      expectation: {
+        amountAtomic: 17_000_137n,
+      },
+    });
+  });
+
+  it("rejects negative USDT attribution offsets and any TRX attribution offset", () => {
+    expect(
+      buildPurchaseOrderPaymentContract({
+        package: usdtPackage,
+        quote: {
+          asset: "USDT",
+          toAddress: "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+          tokenContractAddress:
+            "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+          amountAtomic: 17_000_000n,
+          requiredConfirmations: 1,
+        },
+        attributionOffsetAtomic: -1n,
+      }),
+    ).toEqual({
+      kind: "invalid",
+      reason: "invalid_attribution_offset",
+    });
+
+    expect(
+      buildPurchaseOrderPaymentContract({
+        package: usdtPackage,
+        quote: {
+          asset: "TRX",
+          toAddress: "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+          tokenContractAddress: null,
+          amountAtomic: 50_000_000n,
+          requiredConfirmations: 1,
+        },
+        attributionOffsetAtomic: 1n,
+      }),
+    ).toEqual({
+      kind: "invalid",
+      reason: "invalid_attribution_offset",
     });
   });
 
