@@ -459,7 +459,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
           "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
         requiredConfirmationsSnapshot: 2,
         quotedAmountAtomic: 17_000_000n,
-        quoteExpiresAt: null,
+        quoteExpiresAt: new Date("2026-09-22T02:15:00.000Z"),
       },
     };
 
@@ -510,6 +510,29 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       amountAtomic: 17_000_000n,
       requiredConfirmations: 2,
     });
+
+    const replayed = await purchaseOrderRepository.createOrGet({
+      ...input,
+      payment: {
+        ...input.payment,
+        quoteExpiresAt: new Date("2026-09-22T02:20:00.000Z"),
+      },
+    });
+
+    expect(replayed).toMatchObject({
+      kind: "existing",
+      order: {
+        id: first.order.id,
+      },
+    });
+
+    if (replayed.kind === "conflict") {
+      throw new Error("Expected idempotent purchase-order replay");
+    }
+
+    expect(replayed.order.payment.quoteExpiresAt).toEqual(
+      input.payment.quoteExpiresAt,
+    );
 
     await expect(
       purchaseOrderCustomerRepository.findActiveUserIdByTelegramUserId(
