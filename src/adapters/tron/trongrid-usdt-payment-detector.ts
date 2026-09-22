@@ -386,6 +386,12 @@ export class TronGridUsdtPaymentDetector
         await this.transport.listIncomingUsdtTransfers({
           toAddress,
           tokenContractAddress,
+          ...(request.minTimestampMs === undefined
+            ? {}
+            : { minTimestampMs: request.minTimestampMs }),
+          ...(request.maxTimestampMs === undefined
+            ? {}
+            : { maxTimestampMs: request.maxTimestampMs }),
           ...(request.cursor === undefined
             ? {}
             : { cursor: request.cursor }),
