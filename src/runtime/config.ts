@@ -16,6 +16,7 @@ export interface UsdtPaymentRuntimeConfig {
   readonly tokenContractAddress: string;
   readonly requiredConfirmations: number;
   readonly attributionMaxOffsetAtomic: bigint;
+  readonly quoteTtlMs: number;
   readonly reconciliation: UsdtReconciliationRuntimeConfig;
 }
 
@@ -32,6 +33,7 @@ const USDT_REQUIRED_KEYS = [
   "USDT_TOKEN_CONTRACT_ADDRESS",
   "USDT_REQUIRED_CONFIRMATIONS",
   "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
+  "USDT_QUOTE_TTL_MS",
   "USDT_TRON_GRID_BASE_URL",
   "USDT_TRON_HEAD_BASE_URL",
   "USDT_TRON_SOLIDIFIED_BASE_URL",
