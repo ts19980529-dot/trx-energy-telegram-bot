@@ -1,10 +1,12 @@
 import { PurchaseOrderCreationService } from "../application/payments/purchase-order-service.js";
+import { PurchaseOrderStatusService } from "../application/payments/purchase-order-status-service.js";
 import { UsdtPaymentReconciliationService } from "../application/payments/usdt-payment-reconciliation-service.js";
 import { AdminAccessService } from "../application/telegram/admin-access-service.js";
 import { PackageSelectionService } from "../application/telegram/package-selection-service.js";
 import { TelegramStartService } from "../application/telegram/start-service.js";
 import { PostgresPackageCreditRepository } from "../adapters/database/postgres-package-credit-repository.js";
 import { PostgresPaymentLifecycleRepository } from "../adapters/database/postgres-payment-lifecycle-repository.js";
+import { PostgresPurchaseOrderStatusRepository } from "../adapters/database/postgres-purchase-order-status-repository.js";
 import {
   PostgresPurchaseOrderCustomerRepository,
   PostgresPurchaseOrderRepository,
@@ -222,6 +224,13 @@ async function main(): Promise<void> {
       );
     }
 
+    const purchaseOrderStatus =
+      purchaseOrderCreation === undefined
+        ? undefined
+        : new PurchaseOrderStatusService(
+            new PostgresPurchaseOrderStatusRepository(postgres.db),
+          );
+
     const bot = createTelegramBot(botToken, {
       start: startService,
       packageSelection,
@@ -229,6 +238,9 @@ async function main(): Promise<void> {
       ...(purchaseOrderCreation === undefined
         ? {}
         : { purchaseOrderCreation }),
+      ...(purchaseOrderStatus === undefined
+        ? {}
+        : { purchaseOrderStatus }),
     });
 
     await bot.init();

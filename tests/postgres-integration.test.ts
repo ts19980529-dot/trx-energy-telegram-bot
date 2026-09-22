@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PostgresPackageCreditRepository } from "../src/adapters/database/postgres-package-credit-repository.js";
 import { PostgresPaymentLifecycleRepository } from "../src/adapters/database/postgres-payment-lifecycle-repository.js";
+import { PostgresPurchaseOrderStatusRepository } from "../src/adapters/database/postgres-purchase-order-status-repository.js";
 import { PostgresUsdtReconciliationOrderRepository } from "../src/adapters/database/postgres-usdt-payment-reconciliation-order-repository.js";
 import {
   PostgresPurchaseOrderCustomerRepository,
@@ -39,6 +40,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let purchaseOrderRepository: PostgresPurchaseOrderRepository;
   let purchaseOrderCustomerRepository: PostgresPurchaseOrderCustomerRepository;
   let paymentLifecycleRepository: PostgresPaymentLifecycleRepository;
+  let purchaseOrderStatusRepository: PostgresPurchaseOrderStatusRepository;
   let packageCreditRepository: PostgresPackageCreditRepository;
   let paymentReconciliationOrderRepository: PostgresUsdtReconciliationOrderRepository;
 
@@ -62,6 +64,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       new PostgresPurchaseOrderCustomerRepository(resource.db);
     paymentLifecycleRepository =
       new PostgresPaymentLifecycleRepository(resource.db);
+    purchaseOrderStatusRepository =
+      new PostgresPurchaseOrderStatusRepository(resource.db);
     packageCreditRepository =
       new PostgresPackageCreditRepository(resource.db);
     paymentReconciliationOrderRepository =
@@ -1765,6 +1769,75 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       quoteExpiresAt: null,
     });
     expect(row?.createdAt).toBeInstanceOf(Date);
+  });
+
+
+  it("returns purchase-order status only to the owning numeric Telegram user", async () => {
+    const telegramUserId = 9_100_000_000_022n;
+    const user = await userRepository.onboard({
+      telegramUserId,
+      username: "phase3_status_owner",
+    });
+    const packageId = "f2222222-2222-4222-8222-222222222222";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase3_status_package",
+        count: 20,
+        priceUsdtMicros: 34_000_000n,
+        enabled: true,
+        sortOrder: 160,
+      })
+      .onConflictDoNothing();
+
+    const created = await purchaseOrderRepository.createOrGet({
+      userId: user.id,
+      packageId,
+      idempotencyKey: "phase3:status:owned",
+      payment: {
+        packageCodeSnapshot: "phase3_status_package",
+        countSnapshot: 20,
+        priceUsdtMicrosSnapshot: 34_000_000n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot:
+          "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL",
+        paymentTokenContractAddressSnapshot:
+          "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 34_000_000n,
+        quoteExpiresAt: null,
+      },
+      maxUsdtAttributionOffsetAtomic: 100n,
+    });
+
+    if (created.kind === "conflict") {
+      throw new Error("Unexpected status order conflict");
+    }
+
+    await expect(
+      purchaseOrderStatusRepository.findOwnedOrder({
+        orderId: created.order.id,
+        telegramUserId,
+      }),
+    ).resolves.toMatchObject({
+      id: created.order.id,
+      status: "waiting_payment",
+      availableCount: 0,
+      payment: {
+        countSnapshot: 20,
+        paymentAsset: "USDT",
+        quotedAmountAtomic: created.order.expectation.amountAtomic,
+      },
+    });
+
+    await expect(
+      purchaseOrderStatusRepository.findOwnedOrder({
+        orderId: created.order.id,
+        telegramUserId: telegramUserId + 1n,
+      }),
+    ).resolves.toBeUndefined();
   });
 
 });
