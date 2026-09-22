@@ -72,17 +72,28 @@ export function createSecretProvider(
   });
 }
 
+export function loadDatabaseUrl(
+  env: NodeJS.ProcessEnv,
+): string {
+  const value = env.DATABASE_URL;
+
+  if (value === undefined || value.trim() === "") {
+    throw new Error("DATABASE_URL is not configured");
+  }
+
+  return value;
+}
+
 export async function loadRuntimeSecrets(
   provider: SecretProvider,
   input: {
+    readonly env: NodeJS.ProcessEnv;
     readonly nodeEnv: string | undefined;
     readonly usdtEnabled: boolean;
   },
 ): Promise<RuntimeSecrets> {
-  const [botToken, databaseUrl] = await Promise.all([
-    requireSecret(provider, "BOT_TOKEN"),
-    requireSecret(provider, "DATABASE_URL"),
-  ]);
+  const botToken = await requireSecret(provider, "BOT_TOKEN");
+  const databaseUrl = loadDatabaseUrl(input.env);
 
   const requireTronApiKey =
     input.usdtEnabled && input.nodeEnv?.trim() === "production";

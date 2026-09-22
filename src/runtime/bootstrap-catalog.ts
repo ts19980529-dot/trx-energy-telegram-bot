@@ -1,18 +1,9 @@
 import { createPostgresResource } from "../adapters/database/postgres.js";
 import { bootstrapCatalogIfNeeded } from "./catalog-bootstrap.js";
-import { parseSecretProviderKind } from "./config.js";
-import { createSecretProvider } from "./secret-provider.js";
+import { loadDatabaseUrl } from "./secret-provider.js";
 
 async function main(): Promise<void> {
-  const secrets = createSecretProvider(
-    parseSecretProviderKind(process.env),
-    process.env,
-  );
-  const databaseUrl = await secrets.getSecret("DATABASE_URL");
-
-  if (databaseUrl === undefined) {
-    throw new Error("DATABASE_URL is not configured");
-  }
+  const databaseUrl = loadDatabaseUrl(process.env);
 
   const postgres = createPostgresResource(databaseUrl);
 

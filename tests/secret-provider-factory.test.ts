@@ -45,11 +45,46 @@ describe("loadRuntimeSecrets", () => {
     DATABASE_URL: "postgresql://example.invalid/db",
   } satisfies NodeJS.ProcessEnv;
 
+  it("loads DATABASE_URL from the deployment environment instead of the SecretProvider", async () => {
+    const provider = createSecretProvider("environment", {
+      BOT_TOKEN: "bot-token",
+    });
+
+    await expect(
+      loadRuntimeSecrets(provider, {
+        env: {
+          DATABASE_URL: "postgresql://railway.invalid/db",
+        },
+        nodeEnv: "development",
+        usdtEnabled: false,
+      }),
+    ).resolves.toEqual({
+      botToken: "bot-token",
+      databaseUrl: "postgresql://railway.invalid/db",
+    });
+  });
+
+  it("fails closed when DATABASE_URL is absent from the deployment environment", async () => {
+    const provider = createSecretProvider("environment", {
+      BOT_TOKEN: "bot-token",
+      DATABASE_URL: "postgresql://provider.invalid/db",
+    });
+
+    await expect(
+      loadRuntimeSecrets(provider, {
+        env: {},
+        nodeEnv: "development",
+        usdtEnabled: false,
+      }),
+    ).rejects.toThrow(/DATABASE_URL is not configured/);
+  });
+
   it("fails closed when production USDT runtime has no TRON_API_KEY", async () => {
     const provider = createSecretProvider("environment", baseSecrets);
 
     await expect(
       loadRuntimeSecrets(provider, {
+        env: baseSecrets,
         nodeEnv: "production",
         usdtEnabled: true,
       }),
@@ -64,6 +99,7 @@ describe("loadRuntimeSecrets", () => {
 
     await expect(
       loadRuntimeSecrets(provider, {
+        env: baseSecrets,
         nodeEnv: " production ",
         usdtEnabled: true,
       }),
@@ -79,6 +115,7 @@ describe("loadRuntimeSecrets", () => {
 
     await expect(
       loadRuntimeSecrets(provider, {
+        env: baseSecrets,
         nodeEnv: "development",
         usdtEnabled: true,
       }),
@@ -93,6 +130,7 @@ describe("loadRuntimeSecrets", () => {
 
     await expect(
       loadRuntimeSecrets(provider, {
+        env: baseSecrets,
         nodeEnv: "production",
         usdtEnabled: false,
       }),
