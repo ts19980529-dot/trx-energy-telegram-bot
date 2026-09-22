@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PostgresPackageCreditRepository } from "../src/adapters/database/postgres-package-credit-repository.js";
 import { PostgresPaymentLifecycleRepository } from "../src/adapters/database/postgres-payment-lifecycle-repository.js";
-import { PostgresUsdtPaymentReconciliationOrderRepository } from "../src/adapters/database/postgres-usdt-payment-reconciliation-order-repository.js";
+import { PostgresUsdtReconciliationOrderRepository } from "../src/adapters/database/postgres-usdt-payment-reconciliation-order-repository.js";
 import {
   PostgresPurchaseOrderCustomerRepository,
   PostgresPurchaseOrderRepository,
@@ -40,7 +40,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let purchaseOrderCustomerRepository: PostgresPurchaseOrderCustomerRepository;
   let paymentLifecycleRepository: PostgresPaymentLifecycleRepository;
   let packageCreditRepository: PostgresPackageCreditRepository;
-  let paymentReconciliationOrderRepository: PostgresUsdtPaymentReconciliationOrderRepository;
+  let paymentReconciliationOrderRepository: PostgresUsdtReconciliationOrderRepository;
 
   beforeAll(async () => {
     resource = createPostgresResource(TEST_DATABASE_URL ?? "");
@@ -65,7 +65,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     packageCreditRepository =
       new PostgresPackageCreditRepository(resource.db);
     paymentReconciliationOrderRepository =
-      new PostgresUsdtPaymentReconciliationOrderRepository(resource.db);
+      new PostgresUsdtReconciliationOrderRepository(resource.db);
   });
 
   afterAll(async () => {
