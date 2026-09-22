@@ -1,10 +1,14 @@
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 import { createPostgresResource } from "../adapters/database/postgres.js";
-import { EnvironmentSecretProvider } from "../adapters/secrets/environment-secret-provider.js";
+import { parseSecretProviderKind } from "./config.js";
+import { createSecretProvider } from "./secret-provider.js";
 
 async function main(): Promise<void> {
-  const secrets = new EnvironmentSecretProvider(process.env);
+  const secrets = createSecretProvider(
+    parseSecretProviderKind(process.env),
+    process.env,
+  );
   const databaseUrl = await secrets.getSecret("DATABASE_URL");
 
   if (databaseUrl === undefined) {

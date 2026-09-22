@@ -18,7 +18,7 @@ import {
 import { PostgresUsdtReconciliationOrderRepository } from "../adapters/database/postgres-usdt-payment-reconciliation-order-repository.js";
 import { createPostgresResource } from "../adapters/database/postgres.js";
 import { ConfiguredUsdtPurchaseQuoteProvider } from "../adapters/payments/configured-usdt-purchase-quote-provider.js";
-import { EnvironmentSecretProvider } from "../adapters/secrets/environment-secret-provider.js";
+import { createSecretProvider } from "./secret-provider.js";
 import {
   assertLongPollingAvailable,
   createTelegramBot,
@@ -107,7 +107,10 @@ function logRetryablePaymentReadError(error: unknown): void {
 
 async function main(): Promise<void> {
   const config = parseRuntimeConfig(process.env);
-  const secretProvider = new EnvironmentSecretProvider(process.env);
+  const secretProvider = createSecretProvider(
+    config.secretProvider,
+    process.env,
+  );
 
   if (secretProvider.name !== config.secretProvider) {
     throw new Error("SecretProvider configuration mismatch");
