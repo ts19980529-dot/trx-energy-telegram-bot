@@ -111,17 +111,9 @@ describe("parseRuntimeConfig", () => {
     },
   );
 
-  it("accepts the 1Password SecretProvider", () => {
-    expect(
-      parseRuntimeConfig({ SECRET_PROVIDER: "1password" }),
-    ).toEqual({
-      secretProvider: "1password",
-    });
-  });
-
-  it("fails closed for an unknown SecretProvider", () => {
+  it("fails closed for an unsupported SecretProvider", () => {
     expect(() =>
-      parseRuntimeConfig({ SECRET_PROVIDER: "unsupported" }),
+      parseRuntimeConfig({ SECRET_PROVIDER: "1password" }),
     ).toThrow(/SecretProvider/);
   });
 });
