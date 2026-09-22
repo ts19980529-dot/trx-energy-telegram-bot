@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, gte, lte } from "drizzle-orm";
 
 import type {
   PurchaseOrderCustomerRepository,
@@ -14,6 +14,7 @@ import {
 } from "../../core/orders/state-machine.js";
 import {
   paymentExpectationFromOrderSnapshot,
+  withUsdtPaymentAttributionOffset,
   type PurchaseOrderPaymentSnapshot,
 } from "../../core/payments/purchase-order-payment.js";
 import {
@@ -39,6 +40,8 @@ function toPaymentSnapshot(
     packageCodeSnapshot: row.packageCodeSnapshot,
     countSnapshot: row.countSnapshot,
     priceUsdtMicrosSnapshot: row.priceUsdtMicrosSnapshot,
+    paymentAttributionOffsetAtomic:
+      row.paymentAttributionOffsetAtomic,
     paymentAsset:
       row.paymentAsset === "TRX" ? "TRX" : "USDT",
     paymentToAddressSnapshot: row.paymentToAddressSnapshot,
@@ -94,8 +97,7 @@ function samePayload(
   input: PurchaseOrderPersistenceInput,
 ): boolean {
   const payment = input.payment;
-
-  return (
+  const commonMatches =
     row.userId === input.userId &&
     row.packageId === input.packageId &&
     row.idempotencyKey === input.idempotencyKey &&
@@ -110,8 +112,27 @@ function samePayload(
       payment.paymentTokenContractAddressSnapshot &&
     row.requiredConfirmationsSnapshot ===
       payment.requiredConfirmationsSnapshot &&
-    row.quotedAmountAtomic === payment.quotedAmountAtomic &&
-    sameTimestamp(row.quoteExpiresAt, payment.quoteExpiresAt)
+    sameTimestamp(row.quoteExpiresAt, payment.quoteExpiresAt);
+
+  if (!commonMatches) {
+    return false;
+  }
+
+  if (payment.paymentAsset === "USDT") {
+    return (
+      (payment.paymentAttributionOffsetAtomic ?? 0n) === 0n &&
+      payment.quotedAmountAtomic ===
+        payment.priceUsdtMicrosSnapshot &&
+      paymentExpectationFromOrderSnapshot(
+        toPaymentSnapshot(row),
+      ) !== undefined
+    );
+  }
+
+  return (
+    row.paymentAttributionOffsetAtomic === 0n &&
+    (payment.paymentAttributionOffsetAtomic ?? 0n) === 0n &&
+    row.quotedAmountAtomic === payment.quotedAmountAtomic
   );
 }
 
@@ -149,34 +170,79 @@ export class PostgresPurchaseOrderRepository
     input: PurchaseOrderPersistenceInput,
   ): Promise<PurchaseOrderPersistenceResult> {
     return this.db.transaction(async (tx) => {
-      const [inserted] = await tx
-        .insert(packagePurchaseOrders)
-        .values({
-          userId: input.userId,
-          packageId: input.packageId,
-          idempotencyKey: input.idempotencyKey,
-          packageCodeSnapshot:
-            input.payment.packageCodeSnapshot,
-          countSnapshot: input.payment.countSnapshot,
-          priceUsdtMicrosSnapshot:
-            input.payment.priceUsdtMicrosSnapshot,
-          paymentAsset: input.payment.paymentAsset,
-          paymentToAddressSnapshot:
-            input.payment.paymentToAddressSnapshot,
-          paymentTokenContractAddressSnapshot:
-            input.payment.paymentTokenContractAddressSnapshot,
-          requiredConfirmationsSnapshot:
-            input.payment.requiredConfirmationsSnapshot,
-          quotedAmountAtomic: input.payment.quotedAmountAtomic,
-          quoteExpiresAt: input.payment.quoteExpiresAt,
-          status: "created",
-        })
-        .onConflictDoNothing({
-          target: packagePurchaseOrders.idempotencyKey,
-        })
-        .returning();
+      const findExisting = async () => {
+        const [existing] = await tx
+          .select()
+          .from(packagePurchaseOrders)
+          .where(
+            eq(
+              packagePurchaseOrders.idempotencyKey,
+              input.idempotencyKey,
+            ),
+          )
+          .limit(1);
 
-      if (inserted !== undefined) {
+        return existing;
+      };
+
+      const existingBeforeInsert = await findExisting();
+
+      if (existingBeforeInsert !== undefined) {
+        if (!samePayload(existingBeforeInsert, input)) {
+          return { kind: "conflict" as const };
+        }
+
+        return {
+          kind: "existing" as const,
+          order: toRecord(existingBeforeInsert),
+        };
+      }
+
+      if (
+        paymentExpectationFromOrderSnapshot(input.payment) ===
+        undefined
+      ) {
+        throw new Error(
+          "Purchase-order persistence received an invalid payment snapshot",
+        );
+      }
+
+      const insertCandidate = async (
+        payment: PurchaseOrderPaymentSnapshot,
+      ) => {
+        const [inserted] = await tx
+          .insert(packagePurchaseOrders)
+          .values({
+            userId: input.userId,
+            packageId: input.packageId,
+            idempotencyKey: input.idempotencyKey,
+            packageCodeSnapshot:
+              payment.packageCodeSnapshot,
+            countSnapshot: payment.countSnapshot,
+            priceUsdtMicrosSnapshot:
+              payment.priceUsdtMicrosSnapshot,
+            paymentAttributionOffsetAtomic:
+              payment.paymentAttributionOffsetAtomic ?? 0n,
+            paymentAsset: payment.paymentAsset,
+            paymentToAddressSnapshot:
+              payment.paymentToAddressSnapshot,
+            paymentTokenContractAddressSnapshot:
+              payment.paymentTokenContractAddressSnapshot,
+            requiredConfirmationsSnapshot:
+              payment.requiredConfirmationsSnapshot,
+            quotedAmountAtomic: payment.quotedAmountAtomic,
+            quoteExpiresAt: payment.quoteExpiresAt,
+            status: "created",
+          })
+          .onConflictDoNothing()
+          .returning();
+
+        return inserted;
+      };
+
+      const activateInserted = async (
+        inserted: PurchaseOrderRow,
+      ): Promise<PurchaseOrderPersistenceResult> => {
         if (
           !canTransitionPurchaseOrder(
             "created",
@@ -212,33 +278,162 @@ export class PostgresPurchaseOrderRepository
           kind: "created",
           order: toRecord(waiting),
         };
+      };
+
+      if (input.payment.paymentAsset === "TRX") {
+        const inserted = await insertCandidate(input.payment);
+
+        if (inserted !== undefined) {
+          return activateInserted(inserted);
+        }
+
+        const existing = await findExisting();
+
+        if (existing === undefined) {
+          throw new Error(
+            "Purchase-order insert conflicted without an idempotent row",
+          );
+        }
+
+        if (!samePayload(existing, input)) {
+          return { kind: "conflict" };
+        }
+
+        return {
+          kind: "existing",
+          order: toRecord(existing),
+        };
       }
 
-      const [existing] = await tx
-        .select()
-        .from(packagePurchaseOrders)
-        .where(
-          eq(
-            packagePurchaseOrders.idempotencyKey,
-            input.idempotencyKey,
-          ),
-        )
-        .limit(1);
-
-      if (existing === undefined) {
+      if (
+        (input.payment.paymentAttributionOffsetAtomic ?? 0n) !== 0n ||
+        input.payment.quotedAmountAtomic !==
+          input.payment.priceUsdtMicrosSnapshot
+      ) {
         throw new Error(
-          "Idempotency conflict produced no existing purchase order",
+          "USDT persistence input must contain the canonical unattributed quote",
         );
       }
 
-      if (!samePayload(existing, input)) {
-        return { kind: "conflict" };
+      const maxOffset =
+        input.maxUsdtAttributionOffsetAtomic ?? 0n;
+
+      if (maxOffset < 0n) {
+        throw new Error(
+          "USDT attribution max offset must be non-negative",
+        );
       }
 
-      return {
-        kind: "existing",
-        order: toRecord(existing),
-      };
+      const tokenContract =
+        input.payment.paymentTokenContractAddressSnapshot;
+
+      if (tokenContract === null) {
+        throw new Error(
+          "USDT persistence input requires a token contract",
+        );
+      }
+
+      const baseAmount =
+        input.payment.priceUsdtMicrosSnapshot;
+      const maximumAmount = baseAmount + maxOffset;
+
+      while (true) {
+        const usedAmounts = await tx
+          .select({
+            amount: packagePurchaseOrders.quotedAmountAtomic,
+          })
+          .from(packagePurchaseOrders)
+          .where(
+            and(
+              eq(packagePurchaseOrders.paymentAsset, "USDT"),
+              eq(
+                packagePurchaseOrders.paymentTokenContractAddressSnapshot,
+                tokenContract,
+              ),
+              eq(
+                packagePurchaseOrders.paymentToAddressSnapshot,
+                input.payment.paymentToAddressSnapshot,
+              ),
+              gte(
+                packagePurchaseOrders.quotedAmountAtomic,
+                baseAmount,
+              ),
+              lte(
+                packagePurchaseOrders.quotedAmountAtomic,
+                maximumAmount,
+              ),
+            ),
+          )
+          .orderBy(
+            asc(packagePurchaseOrders.quotedAmountAtomic),
+          );
+
+        let candidateAmount = baseAmount;
+
+        for (const row of usedAmounts) {
+          if (row.amount < candidateAmount) {
+            continue;
+          }
+
+          if (row.amount === candidateAmount) {
+            candidateAmount += 1n;
+            continue;
+          }
+
+          break;
+        }
+
+        if (candidateAmount > maximumAmount) {
+          const existing = await findExisting();
+
+          if (existing !== undefined) {
+            if (!samePayload(existing, input)) {
+              return { kind: "conflict" };
+            }
+
+            return {
+              kind: "existing",
+              order: toRecord(existing),
+            };
+          }
+
+          return {
+            kind: "conflict",
+            reason: "attribution_unavailable",
+          };
+        }
+
+        const attributed =
+          withUsdtPaymentAttributionOffset(
+            input.payment,
+            candidateAmount - baseAmount,
+          );
+
+        if (attributed === undefined) {
+          throw new Error(
+            "Failed to build a valid attributed USDT payment snapshot",
+          );
+        }
+
+        const inserted = await insertCandidate(attributed);
+
+        if (inserted !== undefined) {
+          return activateInserted(inserted);
+        }
+
+        const existing = await findExisting();
+
+        if (existing !== undefined) {
+          if (!samePayload(existing, input)) {
+            return { kind: "conflict" };
+          }
+
+          return {
+            kind: "existing",
+            order: toRecord(existing),
+          };
+        }
+      }
     });
   }
 }

@@ -43,6 +43,7 @@ export interface PurchaseOrderPersistenceInput {
   readonly packageId: string;
   readonly idempotencyKey: string;
   readonly payment: PurchaseOrderPaymentSnapshot;
+  readonly maxUsdtAttributionOffsetAtomic?: bigint;
 }
 
 export type PurchaseOrderPersistenceResult =
@@ -52,6 +53,7 @@ export type PurchaseOrderPersistenceResult =
     }
   | {
       readonly kind: "conflict";
+      readonly reason?: "attribution_unavailable";
     };
 
 export interface PurchaseOrderRepository {
@@ -84,6 +86,9 @@ export type PurchaseOrderCreationResult =
     }
   | {
       readonly kind: "idempotency_conflict";
+    }
+  | {
+      readonly kind: "payment_attribution_unavailable";
     };
 
 export class PurchaseOrderCreationService {
@@ -92,7 +97,14 @@ export class PurchaseOrderCreationService {
     private readonly packages: PurchaseOrderPackageRepository,
     private readonly quotes: PurchasePaymentQuoteProvider,
     private readonly orders: PurchaseOrderRepository,
-  ) {}
+    private readonly usdtAttributionMaxOffsetAtomic: bigint,
+  ) {
+    if (usdtAttributionMaxOffsetAtomic < 0n) {
+      throw new Error(
+        "USDT attribution max offset must be non-negative",
+      );
+    }
+  }
 
   async create(input: {
     readonly telegramUserId: bigint;
@@ -174,9 +186,15 @@ export class PurchaseOrderCreationService {
       packageId: selected.id,
       idempotencyKey,
       payment: contract.snapshot,
+      maxUsdtAttributionOffsetAtomic:
+        this.usdtAttributionMaxOffsetAtomic,
     });
 
     if (persisted.kind === "conflict") {
+      if (persisted.reason === "attribution_unavailable") {
+        return { kind: "payment_attribution_unavailable" };
+      }
+
       return { kind: "idempotency_conflict" };
     }
 

@@ -92,6 +92,8 @@ function paymentSnapshot(
     packageCodeSnapshot: row.packageCodeSnapshot,
     countSnapshot: row.countSnapshot,
     priceUsdtMicrosSnapshot: row.priceUsdtMicrosSnapshot,
+    paymentAttributionOffsetAtomic:
+      row.paymentAttributionOffsetAtomic,
     paymentAsset: row.paymentAsset,
     paymentToAddressSnapshot: row.paymentToAddressSnapshot,
     paymentTokenContractAddressSnapshot:

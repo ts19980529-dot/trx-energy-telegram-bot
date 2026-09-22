@@ -21,7 +21,7 @@ Customer-specific package prices are data, not source-code constants.
 
 A purchase order stores immutable snapshots of package code, count, canonical USDT price, selected payment asset, payment destination, token contract (when applicable), required confirmation count, and quoted atomic payment amount. Later configuration changes therefore cannot rewrite historical order economics or payment expectations.
 
-For USDT orders, the atomic quoted amount must equal the canonical USDT-micro price snapshot. TRX quote derivation remains outside the database until the customer rule is confirmed.
+For USDT orders, the quote provider supplies the canonical USDT-micro package price. The persisted settlement amount must equal that canonical price plus a non-negative payment-attribution offset. The canonical package price itself never changes. TRX orders must keep the attribution offset at zero. TRX quote derivation remains outside the database until the customer rule is confirmed.
 
 ## TRX pricing boundary
 
@@ -36,6 +36,14 @@ For top-level TRX payments, `txid` is unique because the transaction itself is t
 TRC-20 records require a non-negative event position. Top-level TRX records must not carry an event position. A partial unique index also permits at most one `confirmed` payment for the same purchase order. Extra or late transfers may still be recorded for reconciliation, but they cannot become a second confirmed payment for that order.
 
 Package crediting is protected again at the ledger layer: both the purchase order and the payment transaction may appear only once in a `purchase_credit` ledger entry.
+
+### USDT payment attribution
+
+For USDT, one token-contract + destination + settlement-amount tuple may belong to only one purchase order for the lifetime of the database. A partial unique index enforces this rule for every USDT order regardless of order status. Expired, failed, paid and credited orders therefore keep their historical attribution amount permanently; the amount is never returned to an allocation pool.
+
+The configured maximum attribution offset is an application/runtime policy, not a database constant. PostgreSQL allocation searches only inside that explicit range and fails closed with attribution unavailable when no amount remains. Concurrent order creation uses the unique index as the final collision authority; a read-before-write result is never trusted by itself.
+
+A user-supplied TXID may later be used only as a lookup hint. It must never establish payment ownership by itself or bypass normal order attribution and finality verification.
 
 ### Payment finality
 

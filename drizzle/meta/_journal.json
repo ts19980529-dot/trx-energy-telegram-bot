@@ -15,6 +15,13 @@
       "when": 1790000000000,
       "tag": "0001_payment_event_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790040000000,
+      "tag": "0002_usdt_payment_attribution",
+      "breakpoints": true
     }
   ]
 }

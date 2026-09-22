@@ -446,6 +446,125 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     ).resolves.toBe(user.id);
   });
 
+  it("allocates lifetime-unique USDT amounts for concurrent same-route orders and never reuses an expired amount", async () => {
+    const packageId = "23232323-2323-4232-8232-232323232323";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "phase2_attribution_package",
+        count: 10,
+        priceUsdtMicros: 17_000_000n,
+        enabled: true,
+        sortOrder: 35,
+      })
+      .onConflictDoNothing();
+
+    const usersForOrders = await Promise.all(
+      [21n, 22n, 23n].map((suffix) =>
+        userRepository.onboard({
+          telegramUserId:
+            9_100_000_000_000n + suffix,
+          username: `phase2_attribution_${suffix}`,
+        }),
+      ),
+    );
+
+    const basePayment = {
+      packageCodeSnapshot: "phase2_attribution_package",
+      countSnapshot: 10,
+      priceUsdtMicrosSnapshot: 17_000_000n,
+      paymentAsset: "USDT" as const,
+      paymentToAddressSnapshot:
+        "TTEST_ATTRIBUTION_DESTINATION",
+      paymentTokenContractAddressSnapshot:
+        "TTEST_USDT_CONTRACT",
+      requiredConfirmationsSnapshot: 1,
+      quotedAmountAtomic: 17_000_000n,
+      quoteExpiresAt: null,
+    };
+
+    const firstTwo = await Promise.all(
+      usersForOrders.slice(0, 2).map((user, index) =>
+        purchaseOrderRepository.createOrGet({
+          userId: user!.id,
+          packageId,
+          idempotencyKey:
+            `phase2:attribution:${index}`,
+          payment: basePayment,
+          maxUsdtAttributionOffsetAtomic: 2n,
+        }),
+      ),
+    );
+
+    const createdFirstTwo = firstTwo.map((result) => {
+      if (result.kind === "conflict") {
+        throw new Error(
+          "Unexpected attribution conflict while slots remain",
+        );
+      }
+
+      expect(result.kind).toBe("created");
+      return result.order;
+    });
+
+    const amounts = createdFirstTwo
+      .map((order) => order.expectation.amountAtomic)
+      .sort((left, right) => (left < right ? -1 : 1));
+
+    expect(amounts).toEqual([
+      17_000_000n,
+      17_000_001n,
+    ]);
+
+    await resource.db
+      .update(packagePurchaseOrders)
+      .set({ status: "expired" })
+      .where(
+        eq(
+          packagePurchaseOrders.id,
+          createdFirstTwo[0]!.id,
+        ),
+      );
+
+    const third = await purchaseOrderRepository.createOrGet({
+      userId: usersForOrders[2]!.id,
+      packageId,
+      idempotencyKey: "phase2:attribution:2",
+      payment: basePayment,
+      maxUsdtAttributionOffsetAtomic: 2n,
+    });
+
+    expect(third).toMatchObject({ kind: "created" });
+
+    if (third.kind !== "created") {
+      throw new Error("Expected third attributed order");
+    }
+
+    expect(third.order.expectation.amountAtomic).toBe(
+      17_000_002n,
+    );
+
+    const exhaustedUser = await userRepository.onboard({
+      telegramUserId: 9_100_000_000_024n,
+      username: "phase2_attribution_exhausted",
+    });
+
+    await expect(
+      purchaseOrderRepository.createOrGet({
+        userId: exhaustedUser.id,
+        packageId,
+        idempotencyKey: "phase2:attribution:exhausted",
+        payment: basePayment,
+        maxUsdtAttributionOffsetAtomic: 2n,
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      reason: "attribution_unavailable",
+    });
+  });
+
   it("detects idempotency-key reuse with a different immutable payload", async () => {
     const firstUser = await userRepository.onboard({
       telegramUserId: 9_100_000_000_007n,
@@ -901,6 +1020,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       packageId,
       idempotencyKey: "phase2:payment:identity:second",
       payment,
+      maxUsdtAttributionOffsetAtomic: 10n,
     });
 
     if (
@@ -1457,12 +1577,14 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       packageId,
       idempotencyKey: "phase2:credit:idempotency:target",
       payment: paymentSnapshot,
+      maxUsdtAttributionOffsetAtomic: 10n,
     });
     const decoyOrder = await purchaseOrderRepository.createOrGet({
       userId: decoyUser.id,
       packageId,
       idempotencyKey: "phase2:credit:idempotency:decoy",
       payment: paymentSnapshot,
+      maxUsdtAttributionOffsetAtomic: 10n,
     });
 
     if (
@@ -1481,7 +1603,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         eventIndex: 8,
         fromAddress: "TTEST_CREDIT_IDEMPOTENCY_TARGET_SENDER",
         toAddress: "TTEST_CREDIT_IDEMPOTENCY_DESTINATION",
-        amountAtomic: 17_000_000n,
+        amountAtomic:
+          targetOrder.order.expectation.amountAtomic,
         confirmations: 1,
         solidified: true,
         evidenceSource: "solidified_node",
@@ -1500,7 +1623,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
           fromAddress:
             "TTEST_CREDIT_IDEMPOTENCY_DECOY_SENDER",
           toAddress: "TTEST_CREDIT_IDEMPOTENCY_DESTINATION",
-          amountAtomic: 17_000_000n,
+          amountAtomic:
+            decoyOrder.order.expectation.amountAtomic,
           confirmations: 1,
           solidified: true,
           evidenceSource: "solidified_node",
