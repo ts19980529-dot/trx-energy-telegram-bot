@@ -16,6 +16,27 @@ describe("createSecretProvider", () => {
       "environment-token",
     );
   });
+
+  it("creates the Infisical provider from bootstrap configuration", () => {
+    const provider = createSecretProvider("infisical", {
+      INFISICAL_PROJECT_ID: "project-id",
+      INFISICAL_ENVIRONMENT: "prod",
+      INFISICAL_CLIENT_ID: "client-id",
+      INFISICAL_CLIENT_SECRET: "client-secret",
+    });
+
+    expect(provider.name).toBe("infisical");
+  });
+
+  it("fails closed when Infisical bootstrap configuration is incomplete", () => {
+    expect(() =>
+      createSecretProvider("infisical", {
+        INFISICAL_PROJECT_ID: "project-id",
+        INFISICAL_ENVIRONMENT: "prod",
+        INFISICAL_CLIENT_ID: "client-id",
+      }),
+    ).toThrow(/INFISICAL_CLIENT_SECRET/);
+  });
 });
 
 describe("loadRuntimeSecrets", () => {
