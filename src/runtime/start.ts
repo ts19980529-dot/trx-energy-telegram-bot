@@ -1,11 +1,17 @@
+import { PurchaseOrderCreationService } from "../application/payments/purchase-order-service.js";
 import { AdminAccessService } from "../application/telegram/admin-access-service.js";
 import { PackageSelectionService } from "../application/telegram/package-selection-service.js";
 import { TelegramStartService } from "../application/telegram/start-service.js";
+import {
+  PostgresPurchaseOrderCustomerRepository,
+  PostgresPurchaseOrderRepository,
+} from "../adapters/database/postgres-purchase-order-repository.js";
 import {
   PostgresEnergyPackageRepository,
   PostgresTelegramUserRepository,
 } from "../adapters/database/postgres-telegram-repositories.js";
 import { createPostgresResource } from "../adapters/database/postgres.js";
+import { ConfiguredUsdtPurchaseQuoteProvider } from "../adapters/payments/configured-usdt-purchase-quote-provider.js";
 import { EnvironmentSecretProvider } from "../adapters/secrets/environment-secret-provider.js";
 import {
   assertLongPollingAvailable,
@@ -60,10 +66,31 @@ async function main(): Promise<void> {
       config.superAdminId,
     );
 
+    const purchaseOrderCreation =
+      config.usdtPayment === undefined
+        ? undefined
+        : new PurchaseOrderCreationService(
+            new PostgresPurchaseOrderCustomerRepository(postgres.db),
+            packages,
+            new ConfiguredUsdtPurchaseQuoteProvider({
+              toAddress: config.usdtPayment.toAddress,
+              tokenContractAddress:
+                config.usdtPayment.tokenContractAddress,
+              requiredConfirmations:
+                config.usdtPayment.requiredConfirmations,
+              quoteTtlMs: config.usdtPayment.quoteTtlMs ?? null,
+            }),
+            new PostgresPurchaseOrderRepository(postgres.db),
+            config.usdtPayment.attributionMaxOffsetAtomic,
+          );
+
     const bot = createTelegramBot(botToken, {
       start: startService,
       packageSelection,
       adminAccess,
+      ...(purchaseOrderCreation === undefined
+        ? {}
+        : { purchaseOrderCreation }),
     });
 
     await bot.init();

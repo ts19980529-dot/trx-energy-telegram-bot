@@ -210,4 +210,101 @@ describe("Telegram adapter", () => {
       calls.some((url) => url.endsWith("/answerCallbackQuery")),
     ).toBe(true);
   });
+
+  it("creates a USDT purchase order from the payment callback using callback identity for idempotency", async () => {
+    const calls: string[] = [];
+    const purchaseInputs: unknown[] = [];
+
+    const services: TelegramBotServices = {
+      start: {
+        async execute() {
+          return { kind: "blocked" };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+      purchaseOrderCreation: {
+        async create(input) {
+          purchaseInputs.push(input);
+
+          return {
+            kind: "ready",
+            created: true,
+            order: {
+              id: "22222222-2222-4222-8222-222222222222",
+              userId: "33333333-3333-4333-8333-333333333333",
+              packageId,
+              idempotencyKey:
+                "telegram:purchase:callback-payment-1",
+              status: "waiting_payment",
+              payment: {
+                packageCodeSnapshot: "demo",
+                countSnapshot: 3,
+                priceUsdtMicrosSnapshot: 4_250_000n,
+                paymentAttributionOffsetAtomic: 137n,
+                paymentAsset: "USDT",
+                paymentToAddressSnapshot: "TTEST_DESTINATION",
+                paymentTokenContractAddressSnapshot:
+                  "TTEST_USDT_CONTRACT",
+                requiredConfirmationsSnapshot: 2,
+                quotedAmountAtomic: 4_250_137n,
+                quoteExpiresAt: null,
+              },
+              expectation: {
+                asset: "USDT",
+                tokenContractAddress: "TTEST_USDT_CONTRACT",
+                toAddress: "TTEST_DESTINATION",
+                amountAtomic: 4_250_137n,
+                requiredConfirmations: 2,
+              },
+            },
+          };
+        },
+      },
+    };
+
+    const bot = createTelegramBot("123456:TEST_TOKEN", services, {
+      botInfo: botInfo(),
+      client: {
+        fetch: mockFetch(calls),
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "callback-payment-1",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}`,
+        message: {
+          message_id: 11,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(purchaseInputs).toHaveLength(1);
+    expect(purchaseInputs[0]).toMatchObject({
+      telegramUserId: 42n,
+      packageId,
+      asset: "USDT",
+      idempotencyKey:
+        "telegram:purchase:callback-payment-1",
+      requestedAt: expect.any(Date),
+    });
+    expect(
+      calls.some((url) => url.endsWith("/answerCallbackQuery")),
+    ).toBe(true);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+  });
 });
