@@ -7,6 +7,7 @@ const completeUsdtConfig = {
   USDT_TOKEN_CONTRACT_ADDRESS: "TTEST_USDT_CONTRACT",
   USDT_REQUIRED_CONFIRMATIONS: "2",
   USDT_ATTRIBUTION_MAX_OFFSET_MICROS: "9999",
+  USDT_QUOTE_TTL_MS: "900000",
   USDT_TRON_GRID_BASE_URL: "https://api.example.test",
   USDT_TRON_HEAD_BASE_URL: "https://fullnode.example.test",
   USDT_TRON_SOLIDIFIED_BASE_URL:
@@ -58,6 +59,7 @@ describe("parseRuntimeConfig", () => {
         tokenContractAddress: "TTEST_USDT_CONTRACT",
         requiredConfirmations: 2,
         attributionMaxOffsetAtomic: 9_999n,
+        quoteTtlMs: 900_000,
         reconciliation: {
           tronGridBaseUrl: "https://api.example.test",
           tronHeadBaseUrl: "https://fullnode.example.test",
@@ -94,6 +96,7 @@ describe("parseRuntimeConfig", () => {
   it.each([
     ["USDT_REQUIRED_CONFIRMATIONS", "0"],
     ["USDT_ATTRIBUTION_MAX_OFFSET_MICROS", "-1"],
+    ["USDT_QUOTE_TTL_MS", "0"],
     ["USDT_TRON_HTTP_TIMEOUT_MS", "0"],
     ["USDT_SCAN_INTERVAL_MS", "0"],
     ["USDT_SCAN_MAX_ORDERS", "0"],
