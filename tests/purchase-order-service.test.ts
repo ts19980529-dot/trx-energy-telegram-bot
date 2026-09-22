@@ -79,7 +79,10 @@ class FakeOrderRepository implements PurchaseOrderRepository {
     }
 
     if (this.mode === "attribution_unavailable") {
-      return { kind: "attribution_unavailable" as const };
+      return {
+        kind: "conflict" as const,
+        reason: "attribution_unavailable" as const,
+      };
     }
 
     const expectation =

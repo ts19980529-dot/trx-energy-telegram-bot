@@ -498,21 +498,19 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       ),
     );
 
-    expect(
-      firstTwo.every((result) => result.kind === "created"),
-    ).toBe(true);
+    const createdFirstTwo = firstTwo.map((result) => {
+      if (result.kind === "conflict") {
+        throw new Error(
+          "Unexpected attribution conflict while slots remain",
+        );
+      }
 
-    const createdFirstTwo = firstTwo.filter(
-      (
-        result,
-      ): result is Extract<
-        (typeof firstTwo)[number],
-        { kind: "created" }
-      > => result.kind === "created",
-    );
+      expect(result.kind).toBe("created");
+      return result.order;
+    });
 
     const amounts = createdFirstTwo
-      .map((result) => result.order.expectation.amountAtomic)
+      .map((order) => order.expectation.amountAtomic)
       .sort((left, right) => (left < right ? -1 : 1));
 
     expect(amounts).toEqual([
@@ -526,7 +524,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       .where(
         eq(
           packagePurchaseOrders.id,
-          createdFirstTwo[0]!.order.id,
+          createdFirstTwo[0]!.id,
         ),
       );
 
@@ -562,7 +560,8 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         maxUsdtAttributionOffsetAtomic: 2n,
       }),
     ).resolves.toEqual({
-      kind: "attribution_unavailable",
+      kind: "conflict",
+      reason: "attribution_unavailable",
     });
   });
 

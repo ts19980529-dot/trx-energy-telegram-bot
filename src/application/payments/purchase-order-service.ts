@@ -53,9 +53,7 @@ export type PurchaseOrderPersistenceResult =
     }
   | {
       readonly kind: "conflict";
-    }
-  | {
-      readonly kind: "attribution_unavailable";
+      readonly reason?: "attribution_unavailable";
     };
 
 export interface PurchaseOrderRepository {
@@ -192,11 +190,11 @@ export class PurchaseOrderCreationService {
         this.usdtAttributionMaxOffsetAtomic,
     });
 
-    if (persisted.kind === "attribution_unavailable") {
-      return { kind: "payment_attribution_unavailable" };
-    }
-
     if (persisted.kind === "conflict") {
+      if (persisted.reason === "attribution_unavailable") {
+        return { kind: "payment_attribution_unavailable" };
+      }
+
       return { kind: "idempotency_conflict" };
     }
 

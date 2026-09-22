@@ -384,7 +384,10 @@ export class PostgresPurchaseOrderRepository
         }
 
         if (candidateAmount > maximumAmount) {
-          return { kind: "attribution_unavailable" };
+          return {
+            kind: "conflict",
+            reason: "attribution_unavailable",
+          };
         }
 
         const attributed =
