@@ -18,7 +18,10 @@ import {
 import { PostgresUsdtReconciliationOrderRepository } from "../adapters/database/postgres-usdt-payment-reconciliation-order-repository.js";
 import { createPostgresResource } from "../adapters/database/postgres.js";
 import { ConfiguredUsdtPurchaseQuoteProvider } from "../adapters/payments/configured-usdt-purchase-quote-provider.js";
-import { createSecretProvider } from "./secret-provider.js";
+import {
+  createSecretProvider,
+  loadRuntimeSecrets,
+} from "./secret-provider.js";
 import {
   assertLongPollingAvailable,
   createTelegramBot,
@@ -38,28 +41,11 @@ import {
   TronGridUsdtPaymentDetector,
 } from "../adapters/tron/trongrid-usdt-payment-detector.js";
 import type {
-  SecretName,
-  SecretProvider,
-} from "../core/secrets/secret-provider.js";
-import type {
   TronAddressCodec,
   TronEncodedAddress,
 } from "../core/payments/tron-evidence-normalization.js";
 import { parseRuntimeConfig } from "./config.js";
 import { PaymentReconciliationLoop } from "./payment-reconciliation-loop.js";
-
-async function requireSecret(
-  provider: SecretProvider,
-  name: SecretName,
-): Promise<string> {
-  const value = await provider.getSecret(name);
-
-  if (value === undefined) {
-    throw new Error(`${name} is not configured`);
-  }
-
-  return value;
-}
 
 function canonicalTronAddress(
   codec: TronAddressCodec,
@@ -116,11 +102,14 @@ async function main(): Promise<void> {
     throw new Error("SecretProvider configuration mismatch");
   }
 
-  const [botToken, databaseUrl, tronApiKey] = await Promise.all([
-    requireSecret(secretProvider, "BOT_TOKEN"),
-    requireSecret(secretProvider, "DATABASE_URL"),
-    secretProvider.getSecret("TRON_API_KEY"),
-  ]);
+  const {
+    botToken,
+    databaseUrl,
+    tronApiKey,
+  } = await loadRuntimeSecrets(secretProvider, {
+    nodeEnv: process.env.NODE_ENV,
+    usdtEnabled: config.usdtPayment !== undefined,
+  });
 
   const postgres = createPostgresResource(databaseUrl);
 
