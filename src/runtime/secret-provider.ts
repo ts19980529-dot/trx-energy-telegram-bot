@@ -10,9 +10,25 @@ const ONEPASSWORD_REFERENCE_KEYS: Partial<
   Record<SecretName, string>
 > = {
   BOT_TOKEN: "ONEPASSWORD_BOT_TOKEN_REF",
-  DATABASE_URL: "ONEPASSWORD_DATABASE_URL_REF",
   TRON_API_KEY: "ONEPASSWORD_TRON_API_KEY_REF",
 };
+
+class OnePasswordRuntimeSecretProvider implements SecretProvider {
+  readonly name = "1password";
+
+  constructor(
+    private readonly customerSecrets: SecretProvider,
+    private readonly infrastructureSecrets: SecretProvider,
+  ) {}
+
+  async getSecret(name: SecretName): Promise<string | undefined> {
+    if (name === "DATABASE_URL") {
+      return this.infrastructureSecrets.getSecret(name);
+    }
+
+    return this.customerSecrets.getSecret(name);
+  }
+}
 
 function nonBlank(
   env: NodeJS.ProcessEnv,
@@ -49,8 +65,10 @@ export function createSecretProvider(
   kind: SecretProviderKind,
   env: NodeJS.ProcessEnv,
 ): SecretProvider {
+  const environmentSecrets = new EnvironmentSecretProvider(env);
+
   if (kind === "environment") {
-    return new EnvironmentSecretProvider(env);
+    return environmentSecrets;
   }
 
   const serviceAccountToken = nonBlank(
@@ -64,8 +82,13 @@ export function createSecretProvider(
     );
   }
 
-  return new OnePasswordSecretProvider({
+  const customerSecrets = new OnePasswordSecretProvider({
     serviceAccountToken,
     secretReferences: onePasswordReferences(env),
   });
+
+  return new OnePasswordRuntimeSecretProvider(
+    customerSecrets,
+    environmentSecrets,
+  );
 }
