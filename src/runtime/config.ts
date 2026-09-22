@@ -1,11 +1,22 @@
 export type SecretProviderKind = "environment";
 
+export interface UsdtReconciliationRuntimeConfig {
+  readonly tronGridBaseUrl: string;
+  readonly tronHeadBaseUrl: string;
+  readonly tronSolidifiedBaseUrl: string;
+  readonly httpTimeoutMs: number;
+  readonly scanIntervalMs: number;
+  readonly maxOrdersPerRun: number;
+  readonly maxPagesPerNamespace: number;
+  readonly tronGridPageSize: number;
+}
+
 export interface UsdtPaymentRuntimeConfig {
   readonly toAddress: string;
   readonly tokenContractAddress: string;
   readonly requiredConfirmations: number;
   readonly attributionMaxOffsetAtomic: bigint;
-  readonly quoteTtlMs?: number;
+  readonly reconciliation: UsdtReconciliationRuntimeConfig;
 }
 
 export interface RuntimeConfig {
@@ -21,11 +32,14 @@ const USDT_REQUIRED_KEYS = [
   "USDT_TOKEN_CONTRACT_ADDRESS",
   "USDT_REQUIRED_CONFIRMATIONS",
   "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
-] as const;
-
-const USDT_CONFIG_KEYS = [
-  ...USDT_REQUIRED_KEYS,
-  "USDT_QUOTE_TTL_MS",
+  "USDT_TRON_GRID_BASE_URL",
+  "USDT_TRON_HEAD_BASE_URL",
+  "USDT_TRON_SOLIDIFIED_BASE_URL",
+  "USDT_TRON_HTTP_TIMEOUT_MS",
+  "USDT_SCAN_INTERVAL_MS",
+  "USDT_SCAN_MAX_ORDERS",
+  "USDT_SCAN_MAX_PAGES",
+  "USDT_TRON_GRID_PAGE_SIZE",
 ] as const;
 
 function trimmed(
@@ -64,15 +78,35 @@ function parseNonNegativeBigInt(
   return BigInt(value);
 }
 
+function requiredValue(
+  env: NodeJS.ProcessEnv,
+  key: string,
+): string {
+  const value = trimmed(env, key);
+
+  if (value === undefined) {
+    throw new Error(`${key} is required`);
+  }
+
+  return value;
+}
+
 function parseUsdtPaymentConfig(
   env: NodeJS.ProcessEnv,
 ): UsdtPaymentRuntimeConfig | undefined {
-  const configuredKeys = USDT_CONFIG_KEYS.filter(
+  const configuredKeys = USDT_REQUIRED_KEYS.filter(
     (key) => trimmed(env, key) !== undefined,
   );
+  const quoteTtl = trimmed(env, "USDT_QUOTE_TTL_MS");
 
-  if (configuredKeys.length === 0) {
+  if (configuredKeys.length === 0 && quoteTtl === undefined) {
     return undefined;
+  }
+
+  if (quoteTtl !== undefined) {
+    throw new Error(
+      "USDT_QUOTE_TTL_MS is not supported until payment expiry reconciliation is implemented",
+    );
   }
 
   const missingKeys = USDT_REQUIRED_KEYS.filter(
@@ -85,50 +119,65 @@ function parseUsdtPaymentConfig(
     );
   }
 
-  const toAddress = trimmed(env, "USDT_PAYMENT_ADDRESS");
-  const tokenContractAddress = trimmed(
-    env,
-    "USDT_TOKEN_CONTRACT_ADDRESS",
-  );
-  const requiredConfirmationsRaw = trimmed(
-    env,
-    "USDT_REQUIRED_CONFIRMATIONS",
-  );
-  const attributionMaxOffsetRaw = trimmed(
-    env,
-    "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
+  const tronGridPageSize = parsePositiveSafeInteger(
+    requiredValue(env, "USDT_TRON_GRID_PAGE_SIZE"),
+    "USDT_TRON_GRID_PAGE_SIZE",
   );
 
-  if (
-    toAddress === undefined ||
-    tokenContractAddress === undefined ||
-    requiredConfirmationsRaw === undefined ||
-    attributionMaxOffsetRaw === undefined
-  ) {
-    throw new Error("USDT payment configuration is incomplete");
+  if (tronGridPageSize > 200) {
+    throw new Error(
+      "USDT_TRON_GRID_PAGE_SIZE must not exceed 200",
+    );
   }
 
-  const quoteTtlRaw = trimmed(env, "USDT_QUOTE_TTL_MS");
-
   return {
-    toAddress,
-    tokenContractAddress,
+    toAddress: requiredValue(env, "USDT_PAYMENT_ADDRESS"),
+    tokenContractAddress: requiredValue(
+      env,
+      "USDT_TOKEN_CONTRACT_ADDRESS",
+    ),
     requiredConfirmations: parsePositiveSafeInteger(
-      requiredConfirmationsRaw,
+      requiredValue(env, "USDT_REQUIRED_CONFIRMATIONS"),
       "USDT_REQUIRED_CONFIRMATIONS",
     ),
     attributionMaxOffsetAtomic: parseNonNegativeBigInt(
-      attributionMaxOffsetRaw,
+      requiredValue(
+        env,
+        "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
+      ),
       "USDT_ATTRIBUTION_MAX_OFFSET_MICROS",
     ),
-    ...(quoteTtlRaw === undefined
-      ? {}
-      : {
-          quoteTtlMs: parsePositiveSafeInteger(
-            quoteTtlRaw,
-            "USDT_QUOTE_TTL_MS",
-          ),
-        }),
+    reconciliation: {
+      tronGridBaseUrl: requiredValue(
+        env,
+        "USDT_TRON_GRID_BASE_URL",
+      ),
+      tronHeadBaseUrl: requiredValue(
+        env,
+        "USDT_TRON_HEAD_BASE_URL",
+      ),
+      tronSolidifiedBaseUrl: requiredValue(
+        env,
+        "USDT_TRON_SOLIDIFIED_BASE_URL",
+      ),
+      httpTimeoutMs: parsePositiveSafeInteger(
+        requiredValue(env, "USDT_TRON_HTTP_TIMEOUT_MS"),
+        "USDT_TRON_HTTP_TIMEOUT_MS",
+      ),
+      scanIntervalMs: parsePositiveSafeInteger(
+        requiredValue(env, "USDT_SCAN_INTERVAL_MS"),
+        "USDT_SCAN_INTERVAL_MS",
+      ),
+      maxOrdersPerRun: parsePositiveSafeInteger(
+        requiredValue(env, "USDT_SCAN_MAX_ORDERS"),
+        "USDT_SCAN_MAX_ORDERS",
+      ),
+      maxPagesPerNamespace: parsePositiveSafeInteger(
+        requiredValue(env, "USDT_SCAN_MAX_PAGES"),
+        "USDT_SCAN_MAX_PAGES",
+      ),
+      tronGridPageSize,
+    },
   };
 }
 
