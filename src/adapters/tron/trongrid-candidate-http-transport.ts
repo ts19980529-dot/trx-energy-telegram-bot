@@ -25,6 +25,8 @@ export interface TronGridUsdtCandidateHttpTransport {
   listIncomingUsdtTransfers(input: {
     readonly toAddress: string;
     readonly tokenContractAddress: string;
+    readonly minTimestampMs?: number;
+    readonly maxTimestampMs?: number;
     readonly cursor?: string;
   }): Promise<TronGridCandidatePageResult>;
 
@@ -222,6 +224,8 @@ export class NodeFetchTronGridUsdtCandidateHttpTransport
   listIncomingUsdtTransfers(input: {
     readonly toAddress: string;
     readonly tokenContractAddress: string;
+    readonly minTimestampMs?: number;
+    readonly maxTimestampMs?: number;
     readonly cursor?: string;
   }): Promise<TronGridCandidatePageResult> {
     const toAddress = nonEmpty(input.toAddress, "toAddress");
@@ -240,6 +244,46 @@ export class NodeFetchTronGridUsdtCandidateHttpTransport
     url.searchParams.set("contract_address", tokenContractAddress);
     url.searchParams.set("limit", String(this.pageSize));
     url.searchParams.set("order_by", "block_timestamp,desc");
+
+    const validateTimestamp = (
+      value: number | undefined,
+      field: string,
+    ): number | undefined => {
+      if (value === undefined) {
+        return undefined;
+      }
+
+      if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`${field} must be a non-negative safe integer`);
+      }
+
+      return value;
+    };
+
+    const minTimestampMs = validateTimestamp(
+      input.minTimestampMs,
+      "minTimestampMs",
+    );
+    const maxTimestampMs = validateTimestamp(
+      input.maxTimestampMs,
+      "maxTimestampMs",
+    );
+
+    if (
+      minTimestampMs !== undefined &&
+      maxTimestampMs !== undefined &&
+      minTimestampMs > maxTimestampMs
+    ) {
+      throw new Error("minTimestampMs must not exceed maxTimestampMs");
+    }
+
+    if (minTimestampMs !== undefined) {
+      url.searchParams.set("min_timestamp", String(minTimestampMs));
+    }
+
+    if (maxTimestampMs !== undefined) {
+      url.searchParams.set("max_timestamp", String(maxTimestampMs));
+    }
 
     if (input.cursor !== undefined) {
       url.searchParams.set(

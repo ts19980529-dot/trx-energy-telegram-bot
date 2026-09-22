@@ -6,14 +6,23 @@ import {
   type BotConfig,
 } from "grammy";
 
+import type { PurchaseOrderCreationService } from "../../application/payments/purchase-order-service.js";
+import type { PurchaseOrderStatusService } from "../../application/payments/purchase-order-status-service.js";
 import type { AdminAccessService } from "../../application/telegram/admin-access-service.js";
 import type { PackageSelectionService } from "../../application/telegram/package-selection-service.js";
 import type { TelegramStartService } from "../../application/telegram/start-service.js";
 import {
   adminRoleLabel,
+  buildOrderStatusKeyboard,
   buildPackageKeyboard,
+  buildPaymentMethodKeyboard,
+  formatPurchaseOrderInstructions,
+  formatPurchaseOrderStatus,
   formatUsdtMicros,
+  parseOrderStatusCallbackData,
   parsePackageCallbackData,
+  parsePackagePaymentCallbackData,
+  purchaseOrderStatusIsTerminal,
 } from "./package-menu.js";
 
 export const telegramAllowedUpdates = [
@@ -25,6 +34,14 @@ export interface TelegramBotServices {
   readonly start: Pick<TelegramStartService, "execute">;
   readonly packageSelection: Pick<PackageSelectionService, "select">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
+  readonly purchaseOrderCreation?: Pick<
+    PurchaseOrderCreationService,
+    "create"
+  >;
+  readonly purchaseOrderStatus?: Pick<
+    PurchaseOrderStatusService,
+    "get"
+  >;
 }
 
 export function createTelegramBot(
@@ -91,10 +108,145 @@ export function createTelegramBot(
       return;
     }
 
-    await ctx.answerCallbackQuery({
-      text: `已选择：${result.package.count} 笔 · ${formatUsdtMicros(result.package.priceUsdtMicros)} USDT`,
-      show_alert: true,
+    await ctx.answerCallbackQuery();
+
+    await ctx.reply(
+      [
+        "套餐详情",
+        "",
+        `笔数：${result.package.count} 笔`,
+        `价格：${formatUsdtMicros(result.package.priceUsdtMicros)} USDT`,
+        "",
+        "请选择支付方式：",
+      ].join("\n"),
+      {
+        reply_markup: buildPaymentMethodKeyboard(result.package.id),
+      },
+    );
+  });
+
+  bot.callbackQuery(/^package:pay:/, async (ctx) => {
+    const selection = parsePackagePaymentCallbackData(
+      ctx.callbackQuery.data,
+    );
+
+    if (selection === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "无效支付操作。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    if (services.purchaseOrderCreation === undefined) {
+      await ctx.reply("当前支付功能尚未启用。");
+      return;
+    }
+
+    const result = await services.purchaseOrderCreation.create({
+      telegramUserId: BigInt(ctx.from.id),
+      packageId: selection.packageId,
+      asset: selection.asset,
+      idempotencyKey: `telegram:purchase:${ctx.callbackQuery.id}`,
+      requestedAt: new Date(),
     });
+
+    switch (result.kind) {
+      case "ready":
+        await ctx.reply(
+          formatPurchaseOrderInstructions(result.order),
+          {
+            reply_markup: buildOrderStatusKeyboard(
+              result.order.id,
+            ),
+          },
+        );
+        return;
+      case "denied":
+        await ctx.reply("账号当前不可用。");
+        return;
+      case "package_unavailable":
+        await ctx.reply("套餐已下架或不存在。");
+        return;
+      case "unsupported_asset":
+        await ctx.reply(`${result.asset} 支付尚未启用。`);
+        return;
+      case "quote_unavailable":
+        await ctx.reply("当前无法获取支付报价，请稍后重试。");
+        return;
+      case "payment_attribution_unavailable":
+        await ctx.reply(
+          "当前 USDT 支付通道暂不可用，请稍后重试或联系客服。",
+        );
+        return;
+      case "idempotency_conflict":
+        await ctx.reply("本次支付操作状态冲突，请返回套餐重新发起。");
+        return;
+      case "invalid_request":
+        await ctx.reply("支付请求无效，请返回套餐重新选择。");
+        return;
+    }
+  });
+
+  bot.callbackQuery(/^order:status:/, async (ctx) => {
+    const orderId = parseOrderStatusCallbackData(
+      ctx.callbackQuery.data,
+    );
+
+    if (orderId === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "无效订单。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (services.purchaseOrderStatus === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "订单状态查询尚未启用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const result = await services.purchaseOrderStatus.get({
+      orderId,
+      telegramUserId: BigInt(ctx.from.id),
+    });
+
+    if (result.kind === "not_found") {
+      await ctx.reply("订单不存在或无权查看。");
+      return;
+    }
+
+    const terminal = purchaseOrderStatusIsTerminal(
+      result.order.status,
+    );
+
+    try {
+      await ctx.editMessageText(
+        formatPurchaseOrderStatus(result.order),
+        {
+          reply_markup: buildOrderStatusKeyboard(
+            result.order.id,
+            !terminal,
+          ),
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof GrammyError &&
+        /message is not modified/i.test(error.description)
+      ) {
+        return;
+      }
+
+      throw error;
+    }
   });
 
   bot.command("admin", async (ctx) => {

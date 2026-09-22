@@ -62,6 +62,8 @@ export interface PaymentDetectionRequest {
   readonly asset: PaymentAsset;
   readonly tokenContractAddress: string | null;
   readonly toAddress: string;
+  readonly minTimestampMs?: number;
+  readonly maxTimestampMs?: number;
   readonly cursor?: string;
 }
 
