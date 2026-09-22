@@ -5,7 +5,7 @@ import {
   UsdtPaymentReconciliationService,
   type PackageCreditWriter,
   type PaymentLifecycleWriter,
-  type UsdtPaymentReconciliationOrderRepository,
+  type UsdtReconciliationOrderRepository,
   type UsdtReconciliationOrder,
 } from "../src/application/payments/usdt-payment-reconciliation-service.js";
 import type {
@@ -61,7 +61,7 @@ function candidate(
   };
 }
 
-class FakeOrders implements UsdtPaymentReconciliationOrderRepository {
+class FakeOrders implements UsdtReconciliationOrderRepository {
   constructor(
     private readonly rows: readonly UsdtReconciliationOrder[],
   ) {}

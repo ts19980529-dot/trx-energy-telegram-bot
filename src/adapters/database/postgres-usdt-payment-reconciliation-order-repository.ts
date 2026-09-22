@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 
 import type {
-  UsdtPaymentReconciliationOrderRepository,
+  UsdtReconciliationOrderRepository,
   UsdtReconciliationOrder,
   UsdtReconciliationOrderStatus,
 } from "../../application/payments/usdt-payment-reconciliation-service.js";
@@ -25,8 +25,8 @@ function isReconciliationStatus(
   return (reconciliationStatuses as readonly string[]).includes(value);
 }
 
-export class PostgresUsdtPaymentReconciliationOrderRepository
-  implements UsdtPaymentReconciliationOrderRepository
+export class PostgresUsdtReconciliationOrderRepository
+  implements UsdtReconciliationOrderRepository
 {
   constructor(private readonly db: AppDatabase) {}
 
