@@ -18,6 +18,7 @@ import type {
 } from "../src/core/providers/energy-provider.js";
 import {
   balanceLedger,
+  energyOptions,
   packageBalances,
 } from "../src/db/schema.js";
 import { bootstrapCatalogIfNeeded } from "../src/runtime/catalog-bootstrap.js";
@@ -284,8 +285,51 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     });
   });
 
-  it("does not create a provider order when count balance is insufficient", async () => {
+  it("replays an existing Energy order even if its option is later disabled", async () => {
     const telegramUserId = 9_200_000_000_005n;
+    await customer(telegramUserId, 1);
+    const provider = new FakeEnergyProvider("completed");
+    const service = new EnergyUsageService(
+      energy,
+      provider,
+      new NodeTronAddressCodec(),
+    );
+
+    const first = await service.execute({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:catalog-replay:1",
+    });
+
+    expect(first.kind).toBe("completed");
+    expect(provider.createCalls).toBe(1);
+
+    await resource.db
+      .update(energyOptions)
+      .set({ enabled: false, updatedAt: new Date() })
+      .where(eq(energyOptions.code, "energy_65k"));
+
+    try {
+      const replay = await service.execute({
+        telegramUserId,
+        optionCode: "energy_65k",
+        recipientAddress: RECIPIENT,
+        idempotencyKey: "energy:test:catalog-replay:1",
+      });
+
+      expect(replay.kind).toBe("completed");
+      expect(provider.createCalls).toBe(1);
+    } finally {
+      await resource.db
+        .update(energyOptions)
+        .set({ enabled: true, updatedAt: new Date() })
+        .where(eq(energyOptions.code, "energy_65k"));
+    }
+  });
+
+  it("does not create a provider order when count balance is insufficient", async () => {
+    const telegramUserId = 9_200_000_000_006n;
     await customer(telegramUserId, 0);
     const provider = new FakeEnergyProvider("completed");
     const service = new EnergyUsageService(
