@@ -165,6 +165,62 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
         )`,
       );
 
+      const [existing] = await tx
+        .select()
+        .from(energyConsumptionOrders)
+        .where(eq(energyConsumptionOrders.idempotencyKey, input.idempotencyKey))
+        .limit(1)
+        .for("update");
+
+      if (existing !== undefined) {
+        const [user] = await tx
+          .select({ id: users.id, status: users.status })
+          .from(users)
+          .where(eq(users.telegramUserId, input.telegramUserId))
+          .limit(1)
+          .for("update");
+
+        if (user === undefined || user.status === "blocked") {
+          return { kind: "denied" };
+        }
+
+        if (
+          !reservationMatches({
+            order: existing,
+            userId: user.id,
+            optionCode: input.optionCode,
+            recipientAddress: input.recipientAddress,
+          })
+        ) {
+          return { kind: "conflict" };
+        }
+
+        const [balance] = await tx
+          .select()
+          .from(packageBalances)
+          .where(eq(packageBalances.userId, user.id))
+          .limit(1)
+          .for("update");
+
+        if (balance === undefined) {
+          throw new Error("Active Energy customer is missing package balance");
+        }
+
+        const [delivery] = await tx
+          .select()
+          .from(providerDeliveries)
+          .where(
+            eq(providerDeliveries.energyConsumptionOrderId, existing.id),
+          )
+          .limit(1);
+
+        return {
+          kind: "ready",
+          created: false,
+          order: toOrderSnapshot({ order: existing, balance, delivery }),
+        };
+      }
+
       const [user] = await tx
         .select({ id: users.id, status: users.status })
         .from(users)
@@ -185,40 +241,6 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
 
       if (balance === undefined) {
         throw new Error("Active Energy customer is missing package balance");
-      }
-
-      const [existing] = await tx
-        .select()
-        .from(energyConsumptionOrders)
-        .where(eq(energyConsumptionOrders.idempotencyKey, input.idempotencyKey))
-        .limit(1)
-        .for("update");
-
-      if (existing !== undefined) {
-        if (
-          !reservationMatches({
-            order: existing,
-            userId: user.id,
-            optionCode: input.optionCode,
-            recipientAddress: input.recipientAddress,
-          })
-        ) {
-          return { kind: "conflict" };
-        }
-
-        const [delivery] = await tx
-          .select()
-          .from(providerDeliveries)
-          .where(
-            eq(providerDeliveries.energyConsumptionOrderId, existing.id),
-          )
-          .limit(1);
-
-        return {
-          kind: "ready",
-          created: false,
-          order: toOrderSnapshot({ order: existing, balance, delivery }),
-        };
       }
 
       const [option] = await tx
