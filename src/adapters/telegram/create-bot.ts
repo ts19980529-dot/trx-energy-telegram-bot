@@ -133,9 +133,15 @@ export function createTelegramBot(
       return;
     }
 
+    const recipientAddress = ctx.message?.text;
+
+    if (recipientAddress === undefined) {
+      return;
+    }
+
     const result = await services.energyUsage.prepare({
       telegramUserId: BigInt(ctx.from.id),
-      recipientAddress: ctx.message.text,
+      recipientAddress,
     });
 
     switch (result.kind) {
