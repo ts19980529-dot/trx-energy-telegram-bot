@@ -76,6 +76,25 @@ function toOrderSnapshot(input: {
   };
 }
 
+function mergeProviderDeliveryStatus(
+  current: ProviderDeliveryStatus,
+  incoming: Exclude<ProviderDeliveryStatus, "pending" | "completed" | "failed">,
+): Exclude<ProviderDeliveryStatus, "completed" | "failed"> {
+  if (current === "completed" || current === "failed") {
+    throw new Error("Terminal provider delivery cannot regress");
+  }
+
+  if (current === "processing") {
+    return "processing";
+  }
+
+  if (current === "accepted" && incoming === "unknown") {
+    return "accepted";
+  }
+
+  return incoming;
+}
+
 function reservationMatches(input: {
   readonly order: EnergyOrderRow;
   readonly userId: string;
@@ -636,11 +655,16 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
         return toOrderSnapshot({ order, balance, delivery });
       }
 
+      const nextStatus = mergeProviderDeliveryStatus(
+        delivery.status as ProviderDeliveryStatus,
+        input.status,
+      );
+
       const [updatedDelivery] = await tx
         .update(providerDeliveries)
         .set({
           providerOrderId,
-          status: input.status,
+          status: nextStatus,
           updatedAt: new Date(),
         })
         .where(eq(providerDeliveries.id, delivery.id))
