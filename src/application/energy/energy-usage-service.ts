@@ -326,6 +326,10 @@ export class EnergyUsageService {
       return resultFromOrder(order);
     }
 
+    if (order.delivery.providerName !== this.provider.name) {
+      throw new Error("Energy provider changed for an existing order");
+    }
+
     let recovered: EnergyOrderStatus | undefined;
 
     try {
