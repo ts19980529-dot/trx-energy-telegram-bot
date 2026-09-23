@@ -6,11 +6,22 @@ import {
   type BotConfig,
 } from "grammy";
 
+import type { EnergyUsageService } from "../../application/energy/energy-usage-service.js";
 import type { PurchaseOrderCreationService } from "../../application/payments/purchase-order-service.js";
 import type { PurchaseOrderStatusService } from "../../application/payments/purchase-order-status-service.js";
 import type { AdminAccessService } from "../../application/telegram/admin-access-service.js";
 import type { PackageSelectionService } from "../../application/telegram/package-selection-service.js";
 import type { TelegramStartService } from "../../application/telegram/start-service.js";
+import {
+  buildEnergyOptionKeyboard,
+  buildEnergyStatusKeyboard,
+  buildMainMenuKeyboard,
+  formatEnergyOrder,
+  isEnergyMenuCallback,
+  isPackageMenuCallback,
+  parseEnergyStatusCallbackData,
+  parseEnergyUseCallbackData,
+} from "./energy-menu.js";
 import {
   adminRoleLabel,
   buildOrderStatusKeyboard,
@@ -34,6 +45,7 @@ export interface TelegramBotServices {
   readonly start: Pick<TelegramStartService, "execute">;
   readonly packageSelection: Pick<PackageSelectionService, "select">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
+  readonly energyUsage?: Pick<EnergyUsageService, "prepare" | "execute" | "getStatus">;
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
     "create"
@@ -66,14 +78,217 @@ export function createTelegramBot(
       return;
     }
 
+    await ctx.reply("请选择服务：", {
+      reply_markup: buildMainMenuKeyboard(),
+    });
+  });
+
+  bot.callbackQuery("menu:packages", async (ctx) => {
+    if (!isPackageMenuCallback(ctx.callbackQuery.data)) {
+      return;
+    }
+
+    const result = await services.start.execute({
+      telegramUserId: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+    });
+
+    if (result.kind === "blocked") {
+      await ctx.answerCallbackQuery({
+        text: "账号当前不可用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
     if (result.packages.length === 0) {
       await ctx.reply("当前暂无可用套餐。");
       return;
     }
 
-    await ctx.reply("请选择能量套餐：", {
+    await ctx.reply("请选择笔数套餐：", {
       reply_markup: buildPackageKeyboard(result.packages),
     });
+  });
+
+  bot.callbackQuery("menu:energy", async (ctx) => {
+    if (!isEnergyMenuCallback(ctx.callbackQuery.data)) {
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    if (services.energyUsage === undefined) {
+      await ctx.reply("当前能量服务尚未启用。");
+      return;
+    }
+
+    await ctx.reply("请发送需要接收能量的 TRON 地址。");
+  });
+
+  bot.hears(/^(?:T[1-9A-HJ-NP-Za-km-z]{33}|41[0-9a-fA-F]{40})$/, async (ctx) => {
+    if (ctx.from === undefined || services.energyUsage === undefined) {
+      return;
+    }
+
+    const result = await services.energyUsage.prepare({
+      telegramUserId: BigInt(ctx.from.id),
+      recipientAddress: ctx.message.text,
+    });
+
+    switch (result.kind) {
+      case "denied":
+        await ctx.reply("账号当前不可用。");
+        return;
+      case "invalid_address":
+        await ctx.reply("TRON 地址无效，请重新发送。");
+        return;
+      case "ready":
+        if (result.options.length === 0) {
+          await ctx.reply("当前暂无可用能量规格。");
+          return;
+        }
+
+        await ctx.reply(
+          [
+            "请选择能量规格：",
+            "",
+            `接收地址：${result.recipientAddress}`,
+            `可用笔数：${result.availableCount} 笔`,
+            `预留笔数：${result.reservedCount} 笔`,
+          ].join("\n"),
+          {
+            reply_markup: buildEnergyOptionKeyboard(
+              result.options,
+              result.recipientAddress,
+            ),
+          },
+        );
+        return;
+    }
+  });
+
+  bot.callbackQuery(/^energy:use:/, async (ctx) => {
+    const selection = parseEnergyUseCallbackData(ctx.callbackQuery.data);
+
+    if (selection === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "无效能量操作。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (services.energyUsage === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "当前能量服务尚未启用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const result = await services.energyUsage.execute({
+      telegramUserId: BigInt(ctx.from.id),
+      optionCode: selection.optionCode,
+      recipientAddress: selection.recipientAddress,
+      idempotencyKey: `telegram:energy:${ctx.callbackQuery.id}`,
+    });
+
+    switch (result.kind) {
+      case "denied":
+        await ctx.reply("账号当前不可用。");
+        return;
+      case "invalid_address":
+        await ctx.reply("TRON 地址无效，请重新发送。");
+        return;
+      case "option_unavailable":
+        await ctx.reply("该能量规格已下架或不存在。");
+        return;
+      case "insufficient_balance":
+        await ctx.reply(
+          `可用笔数不足：当前 ${result.availableCount} 笔，需要 ${result.requiredCount} 笔。请先购买笔数。`,
+        );
+        return;
+      case "conflict":
+        await ctx.reply("本次能量操作状态冲突，请重新发起。");
+        return;
+      case "not_found":
+        await ctx.reply("能量订单不存在。");
+        return;
+      case "completed":
+      case "released":
+      case "processing":
+        await ctx.reply(formatEnergyOrder(result.order), {
+          reply_markup: buildEnergyStatusKeyboard(
+            result.order.id,
+            result.kind === "processing",
+          ),
+        });
+        return;
+    }
+  });
+
+  bot.callbackQuery(/^energy:status:/, async (ctx) => {
+    const orderId = parseEnergyStatusCallbackData(ctx.callbackQuery.data);
+
+    if (orderId === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "无效能量订单。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (services.energyUsage === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "当前能量服务尚未启用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const result = await services.energyUsage.getStatus({
+      orderId,
+      telegramUserId: BigInt(ctx.from.id),
+    });
+
+    if (result.kind === "not_found") {
+      await ctx.reply("能量订单不存在或无权查看。");
+      return;
+    }
+
+    if (
+      result.kind !== "completed" &&
+      result.kind !== "released" &&
+      result.kind !== "processing"
+    ) {
+      await ctx.reply("当前无法查询能量订单状态。");
+      return;
+    }
+
+    try {
+      await ctx.editMessageText(formatEnergyOrder(result.order), {
+        reply_markup: buildEnergyStatusKeyboard(
+          result.order.id,
+          result.kind === "processing",
+        ),
+      });
+    } catch (error) {
+      if (
+        error instanceof GrammyError &&
+        /message is not modified/i.test(error.description)
+      ) {
+        return;
+      }
+
+      throw error;
+    }
   });
 
   bot.callbackQuery(/^package:view:/, async (ctx) => {
