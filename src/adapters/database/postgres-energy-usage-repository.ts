@@ -81,15 +81,11 @@ function reservationMatches(input: {
   readonly userId: string;
   readonly optionCode: string;
   readonly recipientAddress: string;
-  readonly energyAmount: bigint;
-  readonly countCost: number;
 }): boolean {
   return (
     input.order.userId === input.userId &&
     input.order.optionCodeSnapshot === input.optionCode &&
-    input.order.recipientAddress === input.recipientAddress &&
-    input.order.energyAmount === input.energyAmount &&
-    input.order.countCost === input.countCost
+    input.order.recipientAddress === input.recipientAddress
   );
 }
 
@@ -172,21 +168,6 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
         throw new Error("Active Energy customer is missing package balance");
       }
 
-      const [option] = await tx
-        .select()
-        .from(energyOptions)
-        .where(
-          and(
-            eq(energyOptions.code, input.optionCode),
-            eq(energyOptions.enabled, true),
-          ),
-        )
-        .limit(1);
-
-      if (option === undefined) {
-        return { kind: "option_unavailable" };
-      }
-
       const [existing] = await tx
         .select()
         .from(energyConsumptionOrders)
@@ -199,10 +180,8 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
           !reservationMatches({
             order: existing,
             userId: user.id,
-            optionCode: option.code,
+            optionCode: input.optionCode,
             recipientAddress: input.recipientAddress,
-            energyAmount: option.energyAmount,
-            countCost: option.countCost,
           })
         ) {
           return { kind: "conflict" };
@@ -221,6 +200,21 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
           created: false,
           order: toOrderSnapshot({ order: existing, balance, delivery }),
         };
+      }
+
+      const [option] = await tx
+        .select()
+        .from(energyOptions)
+        .where(
+          and(
+            eq(energyOptions.code, input.optionCode),
+            eq(energyOptions.enabled, true),
+          ),
+        )
+        .limit(1);
+
+      if (option === undefined) {
+        return { kind: "option_unavailable" };
       }
 
       if (balance.availableCount < option.countCost) {
