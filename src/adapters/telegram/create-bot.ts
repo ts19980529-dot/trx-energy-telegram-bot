@@ -88,20 +88,17 @@ export function createTelegramBot(
       return;
     }
 
+    await ctx.answerCallbackQuery();
+
     const result = await services.start.execute({
       telegramUserId: BigInt(ctx.from.id),
       username: ctx.from.username ?? null,
     });
 
     if (result.kind === "blocked") {
-      await ctx.answerCallbackQuery({
-        text: "账号当前不可用。",
-        show_alert: true,
-      });
+      await ctx.reply("账号当前不可用。");
       return;
     }
-
-    await ctx.answerCallbackQuery();
 
     if (result.packages.length === 0) {
       await ctx.reply("当前暂无可用套餐。");
@@ -308,28 +305,22 @@ export function createTelegramBot(
       return;
     }
 
+    await ctx.answerCallbackQuery();
+
     const result = await services.packageSelection.select({
       telegramUserId: BigInt(ctx.from.id),
       packageId,
     });
 
     if (result.kind === "denied") {
-      await ctx.answerCallbackQuery({
-        text: "账号当前不可用。",
-        show_alert: true,
-      });
+      await ctx.reply("账号当前不可用。");
       return;
     }
 
     if (result.kind === "unavailable") {
-      await ctx.answerCallbackQuery({
-        text: "套餐已下架或不存在。",
-        show_alert: true,
-      });
+      await ctx.reply("套餐已下架或不存在。");
       return;
     }
-
-    await ctx.answerCallbackQuery();
 
     await ctx.reply(
       [
