@@ -106,6 +106,7 @@ describe("durable Energy reclaim execution", () => {
     const h = harness("signed");
     const pending = ["a", "b", "c"].map((idempotencyKey) => ({
       telegramUserId: 1n, optionCode: "energy", recipientAddress: "recipient", idempotencyKey,
+      providerName: idempotencyKey === "b" ? "previous-provider" : null,
     }));
     const listPending = vi.fn(async (limit: number, afterKey?: string) =>
       pending.filter((order) => afterKey === undefined || order.idempotencyKey > afterKey).slice(0, limit));
@@ -124,7 +125,7 @@ describe("durable Energy reclaim execution", () => {
         { listPending }, { execute },
       );
       for (let i = 0; i < 4; i++) await service.runOnce();
-      expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "b", "c", "a"]);
+      expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "c", "a"]);
       expect(getOrCreateCurrentAttempt.mock.calls.map(([input]) => input.sourceProviderTransactionAttemptId))
         .toEqual(["a", "b", "c", "a"]);
     } finally {
