@@ -15,11 +15,17 @@ const orderId = "123e4567-e89b-12d3-a456-426614174000";
 
 describe("Telegram Energy UI", () => {
   it("keeps Energy as a first-class main-menu service and package purchase as a separate entry", () => {
-    const labels = buildMainMenuKeyboard().inline_keyboard
+    const labels = buildMainMenuKeyboard(true, true).inline_keyboard
       .flat()
       .map((button) => button.text);
 
     expect(labels).toEqual(["使用能量", "购买笔数"]);
+    expect(
+      buildMainMenuKeyboard(false, true).inline_keyboard.flat().map((button) => button.text),
+    ).toEqual(["购买笔数"]);
+    expect(
+      buildMainMenuKeyboard(false, false).inline_keyboard.flat().map((button) => button.text),
+    ).toEqual(["查看笔数套餐"]);
   });
 
   it("builds callback-safe Energy selections within Telegram's 64-byte limit", () => {
@@ -54,8 +60,8 @@ describe("Telegram Energy UI", () => {
     expect(
       keyboard.inline_keyboard.flat().map((button) => button.text),
     ).toEqual([
-      "65000 Energy · 1 笔",
-      "131000 Energy · 1 笔",
+      "65K Energy · 1 笔",
+      "131K Energy · 1 笔",
     ]);
   });
 
@@ -82,6 +88,6 @@ describe("Telegram Energy UI", () => {
           status: "completed",
         },
       }),
-    ).toContain("状态：能量已到账");
+    ).toContain("能量：65K Energy");
   });
 });

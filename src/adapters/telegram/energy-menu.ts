@@ -18,11 +18,20 @@ export interface EnergyUseSelection {
   readonly recipientAddress: string;
 }
 
-export function buildMainMenuKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("使用能量", ENERGY_MENU_CALLBACK)
-    .row()
-    .text("购买笔数", PACKAGE_MENU_CALLBACK);
+export function buildMainMenuKeyboard(
+  energyEnabled: boolean,
+  purchaseEnabled: boolean,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  if (energyEnabled) {
+    keyboard.text("使用能量", ENERGY_MENU_CALLBACK).row();
+  }
+
+  return keyboard.text(
+    purchaseEnabled ? "购买笔数" : "查看笔数套餐",
+    PACKAGE_MENU_CALLBACK,
+  );
 }
 
 export function isEnergyMenuCallback(data: string): boolean {
@@ -77,6 +86,12 @@ export function parseEnergyUseCallbackData(
   return { optionCode, recipientAddress };
 }
 
+function formatEnergyAmount(amount: bigint): string {
+  return amount % 1_000n === 0n
+    ? `${amount / 1_000n}K`
+    : amount.toLocaleString("en-US");
+}
+
 export function buildEnergyOptionKeyboard(
   options: readonly EnergyOptionSummary[],
   recipientAddress: string,
@@ -86,7 +101,7 @@ export function buildEnergyOptionKeyboard(
   for (const option of options) {
     keyboard
       .text(
-        `${option.energyAmount.toString()} Energy · ${option.countCost} 笔`,
+        `${formatEnergyAmount(option.energyAmount)} Energy · ${option.countCost} 笔`,
         energyUseCallbackData(option.code, recipientAddress),
       )
       .row();
@@ -147,7 +162,7 @@ export function formatEnergyOrder(order: EnergyConsumptionSnapshot): string {
     "",
     `订单编号：${order.id}`,
     `接收地址：${order.recipientAddress}`,
-    `能量：${order.energyAmount.toString()}`,
+    `能量：${formatEnergyAmount(order.energyAmount)} Energy`,
     `消耗笔数：${order.countCost} 笔`,
     `状态：${status}`,
     `可用笔数：${order.availableCount} 笔`,

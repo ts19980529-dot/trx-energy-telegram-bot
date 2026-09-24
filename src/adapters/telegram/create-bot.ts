@@ -74,6 +74,21 @@ export function createTelegramBot(
   config?: BotConfig<Context>,
 ): Bot {
   const bot = new Bot(token, config);
+
+  bot.use(async (ctx, next) => {
+    if (ctx.chat?.type === "private") {
+      await next();
+      return;
+    }
+
+    if (ctx.callbackQuery !== undefined) {
+      await ctx.answerCallbackQuery({
+        text: "请在机器人私聊中操作。",
+        show_alert: true,
+      });
+    }
+  });
+
   const handlers = bot.errorBoundary(async (err) => {
     if (err.error instanceof GrammyError || err.error instanceof HttpError) {
       throw err.error;
@@ -110,9 +125,22 @@ export function createTelegramBot(
       return;
     }
 
-    await ctx.reply("请选择服务：", {
-      reply_markup: buildMainMenuKeyboard(),
-    });
+    if (result.packages.length === 0 && services.energyUsage === undefined) {
+      await ctx.reply("当前暂无可用服务，请稍后再试。");
+      return;
+    }
+
+    await ctx.reply(
+      services.energyUsage === undefined
+        ? "能量使用暂未开放，当前可查看笔数套餐。"
+        : "请选择服务：",
+      {
+        reply_markup: buildMainMenuKeyboard(
+          services.energyUsage !== undefined,
+          services.purchaseOrderCreation !== undefined,
+        ),
+      },
+    );
   });
 
   handlers.callbackQuery("menu:packages", async (ctx) => {
@@ -380,11 +408,13 @@ export function createTelegramBot(
         `笔数：${result.package.count} 笔`,
         `价格：${formatUsdtMicros(result.package.priceUsdtMicros)} USDT`,
         "",
-        "请选择支付方式：",
+        services.purchaseOrderCreation === undefined
+          ? "支付功能暂未开放，可先查看套餐信息。"
+          : "请选择支付方式：",
       ].join("\n"),
-      {
-        reply_markup: buildPaymentMethodKeyboard(result.package.id),
-      },
+      services.purchaseOrderCreation === undefined
+        ? {}
+        : { reply_markup: buildPaymentMethodKeyboard(result.package.id) },
     );
   });
 
@@ -396,6 +426,14 @@ export function createTelegramBot(
     if (selection === undefined) {
       await ctx.answerCallbackQuery({
         text: "无效支付操作。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (selection.asset === "TRX") {
+      await ctx.answerCallbackQuery({
+        text: "TRX 支付尚未启用。",
         show_alert: true,
       });
       return;
