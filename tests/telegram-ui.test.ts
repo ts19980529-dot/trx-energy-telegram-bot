@@ -125,7 +125,7 @@ describe("Telegram package UI", () => {
     expect(message).toContain("收款地址：TTEST_DESTINATION");
     expect(message).toContain("有效期：2026-09-22 03:00:00 UTC");
     expect(message).toContain("过期请重新下单");
-    expect(message).toContain("\\n收款地址：");
+    expect(message).toContain("\n收款地址：");
   });
 
   it("renders credited order status with the current package balance", () => {
