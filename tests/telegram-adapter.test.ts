@@ -158,6 +158,96 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
+  it("acknowledges the package menu while its database query is pending", async () => {
+    const calls: string[] = [];
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          entered();
+          await pending;
+          return { kind: "ready", packages: [] };
+        },
+      },
+      packageSelection: {
+        async select() { return { kind: "unavailable" }; },
+      },
+      adminAccess: {
+        async getRole() { return undefined; },
+      },
+    }, { botInfo: botInfo(), client: { fetch: mockFetch(calls) } });
+
+    const handling = bot.handleUpdate({
+      update_id: 200,
+      callback_query: {
+        id: "callback-menu-pending",
+        from: user(),
+        chat_instance: "instance-1",
+        data: "menu:packages",
+        message: {
+          message_id: 10,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    await started;
+    expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+    release();
+    await handling;
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+  });
+
+  it("acknowledges package selection while its database query is pending", async () => {
+    const calls: string[] = [];
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() { return { kind: "ready", packages: [] }; },
+      },
+      packageSelection: {
+        async select() {
+          entered();
+          await pending;
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() { return undefined; },
+      },
+    }, { botInfo: botInfo(), client: { fetch: mockFetch(calls) } });
+
+    const handling = bot.handleUpdate({
+      update_id: 201,
+      callback_query: {
+        id: "callback-package-pending",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:view:${packageId}`,
+        message: {
+          message_id: 10,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    await started;
+    expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+    release();
+    await handling;
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+  });
+
   it("rechecks access for historical package callbacks and answers denied", async () => {
     const calls: string[] = [];
     const selectionInputs: unknown[] = [];
