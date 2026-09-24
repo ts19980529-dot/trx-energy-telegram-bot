@@ -12,27 +12,11 @@ class SignerSchemaNotReadyError extends Error {
   }
 }
 
-function waitForPollingLease(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, 500);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      resolve();
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export interface PostgresResource {
   readonly db: AppDatabase;
   ping(): Promise<void>;
   assertSchemaReady(): Promise<void>;
   assertSignerSchemaReady(): Promise<void>;
-  acquireTelegramPollingLease(signal: AbortSignal, onLost: () => void): Promise<(() => void) | undefined>;
   close(): Promise<void>;
 }
 
@@ -76,47 +60,6 @@ export function createPostgresResource(connectionString: string): PostgresResour
         }
         throw error;
       }
-    },
-
-    async acquireTelegramPollingLease(signal, onLost) {
-      // A dedicated session owns the lock for the full lifetime of long polling.
-      // Session termination releases it even if the process crashes.
-      while (!signal.aborted) {
-        const client = await pool.connect();
-        let held = false;
-        let active = false;
-        const connectionLost = (): void => {
-          if (active) onLost();
-        };
-        client.on("error", connectionLost);
-        client.on("end", connectionLost);
-        try {
-          const result = await client.query<{ acquired: boolean }>(
-            "select pg_try_advisory_lock(7805591, 1) as acquired",
-          );
-          held = result.rows[0]?.acquired === true && !signal.aborted;
-          if (result.rows[0]?.acquired === true && signal.aborted) {
-            await client.query("select pg_advisory_unlock(7805591, 1)");
-          }
-          if (held) {
-            active = true;
-            return () => {
-              active = false;
-              client.off("error", connectionLost);
-              client.off("end", connectionLost);
-              client.release(true);
-            };
-          }
-        } finally {
-          if (!held) {
-            client.off("error", connectionLost);
-            client.off("end", connectionLost);
-            client.release(true);
-          }
-        }
-        await waitForPollingLease(signal);
-      }
-      return undefined;
     },
 
     async close(): Promise<void> {

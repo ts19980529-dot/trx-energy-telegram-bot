@@ -50,34 +50,6 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let packageCreditRepository: PostgresPackageCreditRepository;
   let paymentReconciliationOrderRepository: PostgresUsdtReconciliationOrderRepository;
 
-  it("allows only one Telegram long-polling owner across database connections", async () => {
-    const second = createPostgresResource(TEST_DATABASE_URL ?? "");
-    const controller = new AbortController();
-    let firstRelease = await resource.acquireTelegramPollingLease(controller.signal, () => {});
-    expect(firstRelease).toBeDefined();
-    let secondRelease: (() => void) | undefined;
-    try {
-      let acquired = false;
-      const next = second.acquireTelegramPollingLease(
-        AbortSignal.timeout(5_000),
-        () => {},
-      ).then((release) => {
-        acquired = true;
-        return release;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(acquired).toBe(false);
-      firstRelease?.();
-      firstRelease = undefined;
-      secondRelease = await next;
-      expect(secondRelease).toBeDefined();
-    } finally {
-      firstRelease?.();
-      secondRelease?.();
-      await second.close();
-    }
-  });
-
   beforeAll(async () => {
     resource = createPostgresResource(TEST_DATABASE_URL ?? "");
     await resource.ping();
