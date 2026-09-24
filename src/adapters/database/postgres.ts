@@ -5,10 +5,18 @@ import * as schema from "../../db/schema.js";
 
 export type AppDatabase = NodePgDatabase<typeof schema>;
 
+class SignerSchemaNotReadyError extends Error {
+  constructor() {
+    super("Signer journal schema is not ready");
+    this.name = "SignerSchemaNotReadyError";
+  }
+}
+
 export interface PostgresResource {
   readonly db: AppDatabase;
   ping(): Promise<void>;
   assertSchemaReady(): Promise<void>;
+  assertSignerSchemaReady(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -30,6 +38,27 @@ export function createPostgresResource(connectionString: string): PostgresResour
 
       if (result.rows[0]?.users_table === null || result.rows[0] === undefined) {
         throw new Error("Database schema is not ready");
+      }
+    },
+
+    async assertSignerSchemaReady(): Promise<void> {
+      // Query every signer-owned table and its journal columns before opening
+      // the signing HTTP port. LIMIT 0 validates the deployed schema without
+      // reading customer transactions or changing any data.
+      try {
+        await pool.query("select provider_name from public.provider_deliveries limit 0");
+        await pool.query(
+          "select attempt_key, signer_unsigned_txid, signer_unsigned_digest, signed_transaction, signed_at from public.provider_transaction_attempts limit 0",
+        );
+        await pool.query(
+          "select attempt_key, signer_unsigned_txid, signer_unsigned_digest, signed_transaction, signed_at from public.provider_reclaim_attempts limit 0",
+        );
+      } catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error &&
+          (error.code === "42P01" || error.code === "42703")) {
+          throw new SignerSchemaNotReadyError();
+        }
+        throw error;
       }
     },
 

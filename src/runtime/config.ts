@@ -20,10 +20,21 @@ export interface UsdtPaymentRuntimeConfig {
   readonly reconciliation: UsdtReconciliationRuntimeConfig;
 }
 
+export interface TronEnergyRuntimeConfig {
+  readonly providerName: "tron-own-pool";
+  readonly ownerAddress: string;
+  readonly tronHeadBaseUrl: string;
+  readonly tronSolidifiedBaseUrl: string;
+  readonly httpTimeoutMs: number;
+  readonly signerBaseUrl: string;
+  readonly signerHttpTimeoutMs: number;
+}
+
 export interface RuntimeConfig {
   readonly secretProvider: SecretProviderKind;
   readonly superAdminId?: bigint;
   readonly usdtPayment?: UsdtPaymentRuntimeConfig;
+  readonly tronEnergy?: TronEnergyRuntimeConfig;
 }
 
 const TELEGRAM_ID_MAX = 9_223_372_036_854_775_807n;
@@ -42,6 +53,16 @@ const USDT_REQUIRED_KEYS = [
   "USDT_SCAN_MAX_ORDERS",
   "USDT_SCAN_MAX_PAGES",
   "USDT_TRON_GRID_PAGE_SIZE",
+] as const;
+
+const ENERGY_REQUIRED_KEYS = [
+  "ENERGY_PROVIDER",
+  "ENERGY_OWNER_ADDRESS",
+  "ENERGY_TRON_HEAD_BASE_URL",
+  "ENERGY_TRON_SOLIDIFIED_BASE_URL",
+  "ENERGY_TRON_HTTP_TIMEOUT_MS",
+  "ENERGY_SIGNER_BASE_URL",
+  "ENERGY_SIGNER_HTTP_TIMEOUT_MS",
 ] as const;
 
 function trimmed(
@@ -180,6 +201,71 @@ function parseUsdtPaymentConfig(
   };
 }
 
+function parseTronEnergyConfig(
+  env: NodeJS.ProcessEnv,
+): TronEnergyRuntimeConfig | undefined {
+  const configuredKeys = ENERGY_REQUIRED_KEYS.filter(
+    (key) => trimmed(env, key) !== undefined,
+  );
+
+  if (configuredKeys.length === 0) {
+    return undefined;
+  }
+
+  const missingKeys = ENERGY_REQUIRED_KEYS.filter(
+    (key) => trimmed(env, key) === undefined,
+  );
+
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `Energy provider configuration is incomplete: missing ${missingKeys.join(", ")}`,
+    );
+  }
+
+  const providerName = requiredValue(env, "ENERGY_PROVIDER");
+  if (providerName !== "tron-own-pool") {
+    throw new Error("Configured ENERGY_PROVIDER is not implemented");
+  }
+
+  const signerBaseUrl = requiredValue(env, "ENERGY_SIGNER_BASE_URL");
+  if (env.NODE_ENV?.trim() === "production") {
+    let url: URL;
+    try {
+      url = new URL(signerBaseUrl);
+    } catch {
+      throw new Error("ENERGY_SIGNER_BASE_URL must be a Railway private service origin in production");
+    }
+    if (url.protocol !== "http:" ||
+      !/^[a-z0-9-]+\.railway\.internal$/.test(url.hostname) ||
+      url.port === "" || url.username !== "" || url.password !== "" ||
+      url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+      throw new Error("ENERGY_SIGNER_BASE_URL must be a Railway private service origin in production");
+    }
+  }
+
+  return {
+    providerName,
+    ownerAddress: requiredValue(env, "ENERGY_OWNER_ADDRESS"),
+    tronHeadBaseUrl: requiredValue(
+      env,
+      "ENERGY_TRON_HEAD_BASE_URL",
+    ),
+    tronSolidifiedBaseUrl: requiredValue(
+      env,
+      "ENERGY_TRON_SOLIDIFIED_BASE_URL",
+    ),
+    httpTimeoutMs: parsePositiveSafeInteger(
+      requiredValue(env, "ENERGY_TRON_HTTP_TIMEOUT_MS"),
+      "ENERGY_TRON_HTTP_TIMEOUT_MS",
+    ),
+    signerBaseUrl,
+    signerHttpTimeoutMs: parsePositiveSafeInteger(
+      requiredValue(env, "ENERGY_SIGNER_HTTP_TIMEOUT_MS"),
+      "ENERGY_SIGNER_HTTP_TIMEOUT_MS",
+    ),
+  };
+}
+
 export function parseSecretProviderKind(
   env: NodeJS.ProcessEnv,
 ): SecretProviderKind {
@@ -216,10 +302,12 @@ export function parseRuntimeConfig(
   }
 
   const usdtPayment = parseUsdtPaymentConfig(env);
+  const tronEnergy = parseTronEnergyConfig(env);
 
   return {
     secretProvider,
     ...(superAdminId === undefined ? {} : { superAdminId }),
     ...(usdtPayment === undefined ? {} : { usdtPayment }),
+    ...(tronEnergy === undefined ? {} : { tronEnergy }),
   };
 }

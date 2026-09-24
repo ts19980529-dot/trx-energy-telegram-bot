@@ -14,15 +14,17 @@
     "db:generate": "drizzle-kit generate",
     "check": "npm run typecheck && npm run build && npm test",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/runtime/start.js",
+    "start": "node dist/runtime/railway-start.js",
     "db:migrate": "node dist/runtime/migrate.js",
     "db:bootstrap": "node dist/runtime/bootstrap-catalog.js",
-    "db:prepare": "npm run db:migrate && npm run db:bootstrap"
+    "db:prepare": "npm run db:migrate && npm run db:bootstrap",
+    "start:signer": "node dist/runtime/signer-start.js"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
     "grammy": "1.45.1",
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "tronweb": "6.5.1"
   },
   "devDependencies": {
     "@types/node": "24.13.6",

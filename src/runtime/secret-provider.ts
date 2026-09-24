@@ -10,6 +10,13 @@ export interface RuntimeSecrets {
   readonly botToken: string;
   readonly databaseUrl: string;
   readonly tronApiKey?: string;
+  readonly tronSignerAuthToken?: string;
+}
+
+export interface SignerRuntimeSecrets {
+  readonly databaseUrl: string;
+  readonly privateKey: string;
+  readonly authToken: string;
 }
 
 async function requireSecret(
@@ -90,20 +97,48 @@ export async function loadRuntimeSecrets(
     readonly env: NodeJS.ProcessEnv;
     readonly nodeEnv: string | undefined;
     readonly usdtEnabled: boolean;
+    readonly energyEnabled: boolean;
   },
 ): Promise<RuntimeSecrets> {
   const botToken = await requireSecret(provider, "BOT_TOKEN");
   const databaseUrl = loadDatabaseUrl(input.env);
 
   const requireTronApiKey =
-    input.usdtEnabled && input.nodeEnv?.trim() === "production";
+    (input.usdtEnabled || input.energyEnabled) &&
+    input.nodeEnv?.trim() === "production";
   const tronApiKey = requireTronApiKey
     ? await requireSecret(provider, "TRON_API_KEY")
     : await provider.getSecret("TRON_API_KEY");
+  // The bot's Infisical identity must not gain access to the signer private key.
+  // Its shared transport token may instead be scoped to its Railway service.
+  const tronSignerAuthToken = input.energyEnabled
+    ? input.env.TRON_SIGNER_AUTH_TOKEN?.trim() ||
+      await requireSecret(provider, "TRON_SIGNER_AUTH_TOKEN")
+    : undefined;
 
   return {
     botToken,
     databaseUrl,
     ...(tronApiKey === undefined ? {} : { tronApiKey }),
+    ...(tronSignerAuthToken === undefined
+      ? {}
+      : { tronSignerAuthToken }),
+  };
+}
+
+export async function loadSignerRuntimeSecrets(
+  provider: SecretProvider,
+  env: NodeJS.ProcessEnv,
+): Promise<SignerRuntimeSecrets> {
+  return {
+    databaseUrl: loadDatabaseUrl(env),
+    privateKey: await requireSecret(
+      provider,
+      "TRON_SIGNER_PRIVATE_KEY",
+    ),
+    authToken: await requireSecret(
+      provider,
+      "TRON_SIGNER_AUTH_TOKEN",
+    ),
   };
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import type {
   EnergyConsumptionSnapshot,
@@ -110,6 +110,31 @@ function reservationMatches(input: {
 
 export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
   constructor(private readonly db: AppDatabase) {}
+
+  async listPending(limit: number, afterKey?: string): Promise<readonly {
+    telegramUserId: bigint;
+    optionCode: string;
+    recipientAddress: string;
+    idempotencyKey: string;
+  }[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Energy pending scan limit must be between 1 and 100");
+    }
+    const rows = await this.db.select({
+      telegramUserId: users.telegramUserId,
+      optionCode: energyConsumptionOrders.optionCodeSnapshot,
+      recipientAddress: energyConsumptionOrders.recipientAddress,
+      idempotencyKey: energyConsumptionOrders.idempotencyKey,
+    }).from(energyConsumptionOrders)
+      .innerJoin(users, eq(users.id, energyConsumptionOrders.userId))
+      .where(and(
+        inArray(energyConsumptionOrders.status, ["reserved", "dispatching"]),
+        afterKey === undefined ? undefined : gt(energyConsumptionOrders.idempotencyKey, afterKey),
+      ))
+      .orderBy(asc(energyConsumptionOrders.idempotencyKey))
+      .limit(limit);
+    return rows;
+  }
 
   async prepare(telegramUserId: bigint): Promise<EnergyPreparationResult> {
     const [user] = await this.db

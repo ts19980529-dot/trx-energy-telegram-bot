@@ -19,6 +19,18 @@ const completeUsdtConfig = {
   USDT_TRON_GRID_PAGE_SIZE: "200",
 } satisfies NodeJS.ProcessEnv;
 
+
+const completeEnergyConfig = {
+  ENERGY_PROVIDER: "tron-own-pool",
+  ENERGY_OWNER_ADDRESS: "TTEST_ENERGY_OWNER",
+  ENERGY_TRON_HEAD_BASE_URL: "https://energy-head.example.test",
+  ENERGY_TRON_SOLIDIFIED_BASE_URL:
+    "https://energy-solid.example.test",
+  ENERGY_TRON_HTTP_TIMEOUT_MS: "5000",
+  ENERGY_SIGNER_BASE_URL: "http://signer.railway.internal:8080",
+  ENERGY_SIGNER_HTTP_TIMEOUT_MS: "3000",
+} satisfies NodeJS.ProcessEnv;
+
 describe("parseRuntimeConfig", () => {
   it("defaults to environment secrets without inventing optional runtime configuration", () => {
     expect(parseRuntimeConfig({})).toEqual({
@@ -116,6 +128,70 @@ describe("parseRuntimeConfig", () => {
       expect(() =>
         parseRuntimeConfig({
           ...completeUsdtConfig,
+          [key]: value,
+        }),
+      ).toThrow();
+    },
+  );
+
+  it("keeps Energy delivery disabled without Energy configuration", () => {
+    expect(parseRuntimeConfig({}).tronEnergy).toBeUndefined();
+  });
+
+  it("parses a complete own-pool Energy runtime configuration", () => {
+    expect(parseRuntimeConfig(completeEnergyConfig).tronEnergy).toEqual({
+      providerName: "tron-own-pool",
+      ownerAddress: "TTEST_ENERGY_OWNER",
+      tronHeadBaseUrl: "https://energy-head.example.test",
+      tronSolidifiedBaseUrl: "https://energy-solid.example.test",
+      httpTimeoutMs: 5_000,
+      signerBaseUrl: "http://signer.railway.internal:8080",
+      signerHttpTimeoutMs: 3_000,
+    });
+  });
+
+  it("allows only Railway private signer addresses in production", () => {
+    expect(parseRuntimeConfig({ ...completeEnergyConfig, NODE_ENV: "production" }).tronEnergy?.signerBaseUrl)
+      .toBe("http://signer.railway.internal:8080");
+    for (const address of [
+      "https://signer.example.com",
+      "http://signer.railway.internal.evil.test:8080",
+      "http://signer.railway.internal",
+      "http://signer.railway.internal:8080/path",
+    ]) {
+      expect(() => parseRuntimeConfig({
+        ...completeEnergyConfig, NODE_ENV: "production", ENERGY_SIGNER_BASE_URL: address,
+      })).toThrow(/ENERGY_SIGNER_BASE_URL/);
+    }
+  });
+
+  it("fails closed for partial Energy configuration", () => {
+    expect(() =>
+      parseRuntimeConfig({
+        ENERGY_PROVIDER: "tron-own-pool",
+        ENERGY_OWNER_ADDRESS: "TTEST_ENERGY_OWNER",
+      }),
+    ).toThrow(/Energy provider configuration is incomplete/);
+  });
+
+  it("rejects unsupported Energy providers", () => {
+    expect(() =>
+      parseRuntimeConfig({
+        ...completeEnergyConfig,
+        ENERGY_PROVIDER: "third-party",
+      }),
+    ).toThrow(/ENERGY_PROVIDER/);
+  });
+
+  it.each([
+    ["ENERGY_TRON_HTTP_TIMEOUT_MS", "0"],
+    ["ENERGY_SIGNER_HTTP_TIMEOUT_MS", "0"],
+  ] as const)(
+    "rejects invalid Energy runtime value %s=%s",
+    (key, value) => {
+      expect(() =>
+        parseRuntimeConfig({
+          ...completeEnergyConfig,
           [key]: value,
         }),
       ).toThrow();
