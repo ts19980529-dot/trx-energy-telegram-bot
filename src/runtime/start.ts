@@ -1,4 +1,5 @@
 import { EnergyUsageService } from "../application/energy/energy-usage-service.js";
+import { EnergyPendingRecoveryService } from "../application/energy/energy-pending-recovery-service.js";
 import { EnergyReclaimService } from "../application/energy/energy-reclaim-service.js";
 import { PurchaseOrderCreationService } from "../application/payments/purchase-order-service.js";
 import { PurchaseOrderStatusService } from "../application/payments/purchase-order-status-service.js";
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
     const addressCodec = new NodeTronAddressCodec();
     let energyUsage: EnergyUsageService | undefined;
     let reclaimLoop: PaymentReconciliationLoop | undefined;
+    let energyRecoveryLoop: PaymentReconciliationLoop | undefined;
 
     if (config.tronEnergy !== undefined) {
       if (tronSignerAuthToken === undefined) {
@@ -186,6 +188,18 @@ async function main(): Promise<void> {
         energyRepository,
         provider,
         addressCodec,
+      );
+      energyRecoveryLoop = new PaymentReconciliationLoop(
+        new EnergyPendingRecoveryService(
+          energyRepository,
+          energyUsage,
+          provider.name,
+          20,
+          () => console.error("Energy delivery recovery failed"),
+        ),
+        30_000,
+        () => true,
+        () => console.error("Energy delivery scan unavailable"),
       );
       reclaimLoop = new PaymentReconciliationLoop(
         new EnergyReclaimService(
@@ -322,7 +336,7 @@ async function main(): Promise<void> {
     await assertLongPollingAvailable(bot);
 
     const reconciliationAbort = new AbortController();
-    const backgroundTasks = [reconciliationLoop, reclaimLoop]
+    const backgroundTasks = [reconciliationLoop, energyRecoveryLoop, reclaimLoop]
       .filter((loop): loop is PaymentReconciliationLoop => loop !== undefined)
       .map((loop) => loop.run(reconciliationAbort.signal));
 
