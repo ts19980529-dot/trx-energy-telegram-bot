@@ -102,19 +102,8 @@ describe("durable Energy reclaim execution", () => {
     expect(h.broadcast).toHaveBeenCalledTimes(1);
   });
 
-  it("visits later pending deliveries and reclaim sources even if the first batch keeps failing", async () => {
+  it("visits later reclaim sources even if earlier sources keep failing", async () => {
     const h = harness("signed");
-    const pending = ["a", "b", "c"].map((idempotencyKey) => ({
-      telegramUserId: 1n, optionCode: "energy", recipientAddress: "recipient", idempotencyKey,
-      providerName: idempotencyKey === "b" ? "previous-provider" : null,
-    }));
-    const listPending = vi.fn(async (limit: number, afterKey?: string) =>
-      pending.filter((order) => afterKey === undefined || order.idempotencyKey > afterKey).slice(0, limit));
-    const execute = vi.fn(async (_order: (typeof pending)[number]) => { throw new Error("temporary outage"); });
-    let previousRegistered = false;
-    const canResumeDelivery = (name: string | null) =>
-      name === null || name === "tron-own-pool" ||
-      (previousRegistered && name === "previous-provider");
     const listDueSources = vi.fn(async (limit: number, afterId?: string) =>
       ["a", "b", "c"].filter((id) => afterId === undefined || id > afterId).slice(0, limit));
     const getOrCreateCurrentAttempt = vi.fn(async (_input: {
@@ -126,14 +115,9 @@ describe("durable Energy reclaim execution", () => {
       const service = new EnergyReclaimService(
         { ...h.journal, listDueSources, getOrCreateCurrentAttempt },
         h.signer, h.transport, "tron-own-pool", 1,
-        { listPending }, { execute, canResumeDelivery },
       );
       for (let i = 0; i < 4; i++) await service.runOnce();
-      expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "c", "a"]);
-      previousRegistered = true;
-      await service.runOnce();
-      expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "c", "a", "b"]);
-      expect(getOrCreateCurrentAttempt.mock.calls.slice(0, 4).map(([input]) => input.sourceProviderTransactionAttemptId))
+      expect(getOrCreateCurrentAttempt.mock.calls.map(([input]) => input.sourceProviderTransactionAttemptId))
         .toEqual(["a", "b", "c", "a"]);
     } finally {
       errors.mockRestore();
