@@ -176,6 +176,8 @@ function providerResultStatus(
 
 export class EnergyUsageService {
   private readonly providers: ReadonlyMap<string, EnergyProvider>;
+  // Transient same-process serialization only; durable idempotency remains in the repository/provider.
+  private readonly activeOrders = new Map<string, Promise<void>>();
 
   constructor(
     private readonly repository: EnergyUsageRepository,
@@ -260,15 +262,22 @@ export class EnergyUsageService {
       return resultFromOrder(reservation.order);
     }
 
-    const provider = reservation.order.delivery === null
+    return this.withOrderOperation(reservation.order.id, () =>
+      this.dispatchReservedOrder(reservation.order));
+  }
+
+  private async dispatchReservedOrder(
+    reservedOrder: EnergyConsumptionSnapshot,
+  ): Promise<ExecuteEnergyUsageResult> {
+    const provider = reservedOrder.delivery === null
       ? this.provider
-      : this.providers.get(reservation.order.delivery.providerName);
+      : this.providers.get(reservedOrder.delivery.providerName);
     if (provider === undefined) {
-      return resultFromOrder(reservation.order);
+      return resultFromOrder(reservedOrder);
     }
 
     const dispatch = await this.repository.startDispatch({
-      orderId: reservation.order.id,
+      orderId: reservedOrder.id,
       providerName: provider.name,
     });
 
@@ -350,6 +359,13 @@ export class EnergyUsageService {
     readonly orderId: string;
     readonly telegramUserId: bigint;
   }): Promise<ExecuteEnergyUsageResult> {
+    return this.withOrderOperation(input.orderId, () => this.getStatusUnserialized(input));
+  }
+
+  private async getStatusUnserialized(input: {
+    readonly orderId: string;
+    readonly telegramUserId: bigint;
+  }): Promise<ExecuteEnergyUsageResult> {
     const order = await this.repository.getOwned(input);
 
     if (order === undefined) {
@@ -382,6 +398,27 @@ export class EnergyUsageService {
     }
 
     return this.applyProviderResult(order.id, order.delivery, recovered, provider);
+  }
+
+  private async withOrderOperation(
+    orderId: string,
+    run: () => Promise<ExecuteEnergyUsageResult>,
+  ): Promise<ExecuteEnergyUsageResult> {
+    const running = this.activeOrders.get(orderId);
+    if (running !== undefined) {
+      await running;
+      return this.withOrderOperation(orderId, run);
+    }
+
+    let release!: () => void;
+    const completed = new Promise<void>((resolve) => { release = resolve; });
+    this.activeOrders.set(orderId, completed);
+    try {
+      return await run();
+    } finally {
+      this.activeOrders.delete(orderId);
+      release();
+    }
   }
 
   private async continueExistingDelivery(
