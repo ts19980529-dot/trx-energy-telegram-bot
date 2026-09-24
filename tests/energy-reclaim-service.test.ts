@@ -111,6 +111,10 @@ describe("durable Energy reclaim execution", () => {
     const listPending = vi.fn(async (limit: number, afterKey?: string) =>
       pending.filter((order) => afterKey === undefined || order.idempotencyKey > afterKey).slice(0, limit));
     const execute = vi.fn(async (_order: (typeof pending)[number]) => { throw new Error("temporary outage"); });
+    let previousRegistered = false;
+    const canResumeDelivery = (name: string | null) =>
+      name === null || name === "tron-own-pool" ||
+      (previousRegistered && name === "previous-provider");
     const listDueSources = vi.fn(async (limit: number, afterId?: string) =>
       ["a", "b", "c"].filter((id) => afterId === undefined || id > afterId).slice(0, limit));
     const getOrCreateCurrentAttempt = vi.fn(async (_input: {
@@ -122,11 +126,14 @@ describe("durable Energy reclaim execution", () => {
       const service = new EnergyReclaimService(
         { ...h.journal, listDueSources, getOrCreateCurrentAttempt },
         h.signer, h.transport, "tron-own-pool", 1,
-        { listPending }, { execute },
+        { listPending }, { execute, canResumeDelivery },
       );
       for (let i = 0; i < 4; i++) await service.runOnce();
       expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "c", "a"]);
-      expect(getOrCreateCurrentAttempt.mock.calls.map(([input]) => input.sourceProviderTransactionAttemptId))
+      previousRegistered = true;
+      await service.runOnce();
+      expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "c", "a", "b"]);
+      expect(getOrCreateCurrentAttempt.mock.calls.slice(0, 4).map(([input]) => input.sourceProviderTransactionAttemptId))
         .toEqual(["a", "b", "c", "a"]);
     } finally {
       errors.mockRestore();
