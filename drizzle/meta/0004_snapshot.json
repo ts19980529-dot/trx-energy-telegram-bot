@@ -1,6 +1,6 @@
 {
-  "id": "7d40c0d4-0d97-4f86-b9c0-806c2b7b6c31",
-  "prevId": "3af02f5e-81f7-4c72-927a-3b78210f9a62",
+  "id": "8506b646-6e81-44d3-9d8b-12c0f5432d7b",
+  "prevId": "7d40c0d4-0d97-4f86-b9c0-806c2b7b6c31",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1018,6 +1018,14 @@
           "name": "package_purchase_orders_quote_positive",
           "value": "\"package_purchase_orders\".\"quoted_amount_atomic\" > 0"
         },
+        "package_purchase_orders_attribution_offset_nonnegative": {
+          "name": "package_purchase_orders_attribution_offset_nonnegative",
+          "value": "\"package_purchase_orders\".\"payment_attribution_offset_atomic\" >= 0"
+        },
+        "package_purchase_orders_trx_attribution_offset_zero": {
+          "name": "package_purchase_orders_trx_attribution_offset_zero",
+          "value": "\"package_purchase_orders\".\"payment_asset\" <> 'TRX'\n        or \"package_purchase_orders\".\"payment_attribution_offset_atomic\" = 0"
+        },
         "package_purchase_orders_asset_check": {
           "name": "package_purchase_orders_asset_check",
           "value": "\"package_purchase_orders\".\"payment_asset\" in ('USDT', 'TRX')"
@@ -1037,14 +1045,6 @@
         "package_purchase_orders_status_check": {
           "name": "package_purchase_orders_status_check",
           "value": "\"package_purchase_orders\".\"status\" in ('created', 'waiting_payment', 'payment_detected', 'confirming', 'paid', 'credited', 'expired', 'failed')"
-        },
-        "package_purchase_orders_attribution_offset_nonnegative": {
-          "name": "package_purchase_orders_attribution_offset_nonnegative",
-          "value": "\"package_purchase_orders\".\"payment_attribution_offset_atomic\" >= 0"
-        },
-        "package_purchase_orders_trx_attribution_offset_zero": {
-          "name": "package_purchase_orders_trx_attribution_offset_zero",
-          "value": "\"package_purchase_orders\".\"payment_asset\" <> 'TRX'\n        or \"package_purchase_orders\".\"payment_attribution_offset_atomic\" = 0"
         }
       },
       "isRLSEnabled": false
@@ -1156,37 +1156,6 @@
         }
       },
       "indexes": {
-        "payment_transactions_purchase_order_idx": {
-          "name": "payment_transactions_purchase_order_idx",
-          "columns": [
-            {
-              "expression": "purchase_order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "payment_transactions_confirmed_order_unique": {
-          "name": "payment_transactions_confirmed_order_unique",
-          "columns": [
-            {
-              "expression": "purchase_order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"payment_transactions\".\"status\" = 'confirmed' and \"payment_transactions\".\"purchase_order_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "payment_transactions_txid_idx": {
           "name": "payment_transactions_txid_idx",
           "columns": [
@@ -1242,6 +1211,37 @@
           ],
           "isUnique": true,
           "where": "\"payment_transactions\".\"asset\" = 'USDT'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payment_transactions_purchase_order_idx": {
+          "name": "payment_transactions_purchase_order_idx",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payment_transactions_confirmed_order_unique": {
+          "name": "payment_transactions_confirmed_order_unique",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"payment_transactions\".\"status\" = 'confirmed' and \"payment_transactions\".\"purchase_order_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1486,6 +1486,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "signer_unsigned_txid": {
+          "name": "signer_unsigned_txid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signer_unsigned_digest": {
+          "name": "signer_unsigned_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_at": {
+          "name": "signed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1513,6 +1537,22 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provider_transaction_attempts_signer_unsigned_txid_unique": {
+          "name": "provider_transaction_attempts_signer_unsigned_txid_unique",
+          "columns": [
+            {
+              "expression": "signer_unsigned_txid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"provider_transaction_attempts\".\"signer_unsigned_txid\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1588,6 +1628,10 @@
         "provider_transaction_attempts_identity_check": {
           "name": "provider_transaction_attempts_identity_check",
           "value": "(\"provider_transaction_attempts\".\"status\" in ('created', 'failed') and \"provider_transaction_attempts\".\"txid\" is null and \"provider_transaction_attempts\".\"expiration_at\" is null) or (\"provider_transaction_attempts\".\"status\" <> 'created' and \"provider_transaction_attempts\".\"txid\" is not null and \"provider_transaction_attempts\".\"expiration_at\" is not null)"
+        },
+        "provider_transaction_attempts_signer_state_check": {
+          "name": "provider_transaction_attempts_signer_state_check",
+          "value": "(\n        \"provider_transaction_attempts\".\"signer_unsigned_txid\" is null\n        and \"provider_transaction_attempts\".\"signer_unsigned_digest\" is null\n        and \"provider_transaction_attempts\".\"signed_transaction\" is null\n        and \"provider_transaction_attempts\".\"signed_at\" is null\n      ) or (\n        \"provider_transaction_attempts\".\"signer_unsigned_txid\" is not null\n        and \"provider_transaction_attempts\".\"signer_unsigned_digest\" is not null\n        and \"provider_transaction_attempts\".\"signed_transaction\" is not null\n        and \"provider_transaction_attempts\".\"signed_at\" is not null\n      )"
         }
       },
       "isRLSEnabled": false
