@@ -369,7 +369,7 @@ void main().catch((error: unknown) => {
   const errorName = error instanceof Error ? error.name : "UnknownError";
   const safeMessage =
     error instanceof Error &&
-    /^(?:[A-Z0-9_]+ is not configured|[A-Z0-9_]+ is required when SECRET_PROVIDER=infisical|Infisical (?:authentication|secret) request failed \(\d{3}\)|Infisical (?:authentication|secret) response is invalid|Database schema is not ready|Telegram webhook is configured; long polling startup refused|Configured SecretProvider is not implemented|SecretProvider configuration mismatch)$/.test(error.message)
+    /^(?:[A-Z0-9_]+ is not configured|[A-Z0-9_]+ is required when SECRET_PROVIDER=infisical|Infisical (?:authentication|secret) request failed \(\d{3}\)|Infisical (?:authentication|secret) response is invalid|BOT_TOKEN is not configured; TRON_API_KEY same-path probe: (?:present|missing)|Database schema is not ready|Telegram webhook is configured; long polling startup refused|Configured SecretProvider is not implemented|SecretProvider configuration mismatch)$/.test(error.message)
       ? error.message
       : undefined;
 

@@ -100,7 +100,13 @@ export async function loadRuntimeSecrets(
     readonly energyEnabled: boolean;
   },
 ): Promise<RuntimeSecrets> {
-  const botToken = await requireSecret(provider, "BOT_TOKEN");
+  const botToken = await provider.getSecret("BOT_TOKEN");
+  if (botToken === undefined) {
+    const tronApiKeyProbe = await provider.getSecret("TRON_API_KEY");
+    throw new Error(
+      `BOT_TOKEN is not configured; TRON_API_KEY same-path probe: ${tronApiKeyProbe === undefined ? "missing" : "present"}`,
+    );
+  }
   const databaseUrl = loadDatabaseUrl(input.env);
 
   const requireTronApiKey =
