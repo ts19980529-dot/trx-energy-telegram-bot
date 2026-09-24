@@ -13,6 +13,7 @@ import {
 } from "../src/adapters/database/postgres.js";
 import { PostgresTelegramUserRepository } from "../src/adapters/database/postgres-telegram-repositories.js";
 import { PostgresTronDelegationSigner } from "../src/adapters/signer/postgres-tron-delegation-signer.js";
+import { PostgresTronReclaimSigner } from "../src/adapters/signer/postgres-tron-reclaim-signer.js";
 import { NodeTronAddressCodec } from "../src/adapters/tron/node-tron-address-codec.js";
 import { EnergyUsageService } from "../src/application/energy/energy-usage-service.js";
 import type {
@@ -89,6 +90,54 @@ function unsignedDelegation(
   };
 }
 
+
+function unsignedReclaim(
+  now: number,
+  balance = 1_000_000,
+  receiverAddress = RECIPIENT,
+) {
+  const base = {
+    visible: true,
+    raw_data: {
+      contract: [
+        {
+          parameter: {
+            value: {
+              owner_address: SIGNER_OWNER,
+              receiver_address: receiverAddress,
+              balance,
+              resource: "ENERGY",
+            },
+            type_url:
+              "type.googleapis.com/protocol.UnDelegateResourceContract",
+          },
+          type: "UnDelegateResourceContract",
+        },
+      ],
+      ref_block_bytes: "0001",
+      ref_block_hash: "0000000000000000",
+      expiration: now + 60_000,
+      timestamp: now,
+    },
+  };
+  const protobuf = utils.transaction.txJsonToPb(base);
+  const rawDataHex =
+    utils.transaction.txPbToRawDataHex(protobuf);
+  const txid = String(
+    utils.transaction.txPbToTxID(protobuf),
+  )
+    .replace(/^0x/, "")
+    .toLowerCase();
+
+  return {
+    txid,
+    transaction: {
+      ...base,
+      txID: txid,
+      raw_data_hex: rawDataHex,
+    },
+  };
+}
 
 class FakeEnergyProvider implements EnergyProvider {
   readonly name = "fake-energy";
@@ -917,6 +966,115 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       txid: null,
       status: "created",
     });
+  });
+
+
+  it("durably signs only the exact eligible UnDelegateResource binding", async () => {
+    const telegramUserId = 9_200_000_000_012n;
+    await customer(telegramUserId, 1);
+
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:reclaim-signer:1",
+    });
+    if (reservation.kind !== "ready") throw new Error("Expected ready Energy reservation");
+
+    const dispatch = await energy.startDispatch({
+      orderId: reservation.order.id,
+      providerName: "tron-own-pool",
+    });
+    const delivery = dispatch.order.delivery;
+    if (delivery === null) throw new Error("Expected provider delivery");
+
+    const attempts = new PostgresEnergyProviderAttemptJournal(resource.db);
+    const source = await attempts.getOrCreateCurrentAttempt({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+    });
+    await attempts.bindDelegation({
+      attemptKey: source.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: SIGNER_OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 1_000_000n,
+      },
+    });
+    await attempts.claimAttemptTransaction({
+      attemptKey: source.attemptKey,
+      providerName: "tron-own-pool",
+      txid: "e".repeat(64),
+      expirationAt: new Date(Date.now() + 60_000),
+    });
+    await attempts.recordAttemptState({
+      attemptKey: source.attemptKey,
+      providerName: "tron-own-pool",
+      status: "accepted",
+      lastBroadcastResult: "accepted",
+    });
+    const completed = await attempts.recordAttemptState({
+      attemptKey: source.attemptKey,
+      providerName: "tron-own-pool",
+      status: "completed",
+      lastChainStatus: "completed",
+    });
+
+    const signerNow = Date.now() + 2 * 60 * 60 * 1000;
+    const reclaimJournal = new PostgresEnergyReclaimAttemptJournal(
+      resource.db,
+      () => signerNow,
+    );
+    const reclaimAttempt = await reclaimJournal.getOrCreateCurrentAttempt({
+      sourceProviderTransactionAttemptId: completed.id,
+      providerName: "tron-own-pool",
+    });
+
+    const unsigned = unsignedReclaim(signerNow);
+    const signer = new PostgresTronReclaimSigner(
+      resource.db,
+      SIGNER_OWNER,
+      SIGNER_PRIVATE_KEY,
+      () => signerNow,
+    );
+
+    const signed = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        signer.sign({
+          attemptKey: reclaimAttempt.attemptKey,
+          unsigned,
+        }),
+      ),
+    );
+    expect(new Set(signed.map((item) => item.txid))).toEqual(
+      new Set([unsigned.txid]),
+    );
+    expect(
+      new Set(
+        signed.map((item) =>
+          JSON.stringify(item.transaction.signature),
+        ),
+      ).size,
+    ).toBe(1);
+
+    const restarted = new PostgresTronReclaimSigner(
+      resource.db,
+      SIGNER_OWNER,
+      SIGNER_PRIVATE_KEY,
+      () => signerNow + 1_000,
+    );
+    await expect(
+      restarted.findSignedByAttemptKey(reclaimAttempt.attemptKey),
+    ).resolves.toEqual(signed[0]);
+
+    await expect(
+      signer.sign({
+        attemptKey: reclaimAttempt.attemptKey,
+        unsigned: unsignedReclaim(signerNow + 1, 2_000_000),
+      }),
+    ).rejects.toThrow("Reclaim signer bound balance mismatch");
   });
 
 });

@@ -1,7 +1,9 @@
 import type {
   TronDelegationTransport,
   TronEnergyResourceSnapshot,
+  TronReclaimTransport,
   TronUnsignedDelegation,
+  TronUnsignedReclaim,
 } from "../energy/tron-own-pool-energy-provider.js";
 import type { TronHttpTransportConfig } from "./tron-http-transport.js";
 
@@ -145,8 +147,9 @@ function receiptExecutionStatus(
     : "failed";
 }
 
-function isDelegateResourceTransaction(
+function isResourceTransaction(
   transaction: Record<string, unknown>,
+  expectedContractType: "DelegateResourceContract" | "UnDelegateResourceContract",
 ): boolean {
   const rawData = transaction.raw_data;
 
@@ -159,14 +162,11 @@ function isDelegateResourceTransaction(
     return false;
   }
 
-  return (
-    rawData.contract[0].type ===
-    "DelegateResourceContract"
-  );
+  return rawData.contract[0].type === expectedContractType;
 }
 
 export class NodeFetchTronDelegationTransport
-  implements TronDelegationTransport
+  implements TronDelegationTransport, TronReclaimTransport
 {
   private readonly headBaseUrl: string;
   private readonly solidifiedBaseUrl: string;
@@ -443,6 +443,58 @@ export class NodeFetchTronDelegationTransport
     };
   }
 
+  async buildEnergyReclaim(input: {
+    readonly ownerAddress: string;
+    readonly recipientAddress: string;
+    readonly balanceSun: bigint;
+  }): Promise<TronUnsignedReclaim> {
+    if (
+      input.balanceSun <= 0n ||
+      input.balanceSun > MAX_SAFE_INTEGER_BIGINT
+    ) {
+      throw new Error(
+        "TRON reclaim balance is outside the safe JSON integer range",
+      );
+    }
+
+    const result = await this.postJson(
+      this.headBaseUrl,
+      "/wallet/undelegateresource",
+      {
+        owner_address: input.ownerAddress,
+        receiver_address: input.recipientAddress,
+        balance: Number(input.balanceSun),
+        resource: "ENERGY",
+        visible: true,
+      },
+    );
+
+    if (result.kind !== "ok") {
+      throw new Error(
+        "TRON UnDelegateResource transaction build failed",
+      );
+    }
+
+    const txid = parseTxid(
+      result.body.txID ?? result.body.txid,
+    );
+    if (txid === undefined) {
+      throw new Error(
+        "TRON UnDelegateResource response is missing txID",
+      );
+    }
+    if (!isRecord(result.body.raw_data)) {
+      throw new Error(
+        "TRON UnDelegateResource response is missing raw_data",
+      );
+    }
+
+    return {
+      txid,
+      transaction: result.body,
+    };
+  }
+
   async broadcastSignedTransaction(
     transaction: Record<string, unknown>,
   ): Promise<"accepted" | "rejected" | "unknown"> {
@@ -470,10 +522,15 @@ export class NodeFetchTronDelegationTransport
     return "unknown";
   }
 
-  async getTransactionObservation(input: {
-    readonly txid: string;
-    readonly expirationAt: Date;
-  }): Promise<
+  async getTransactionObservation(
+    input: {
+      readonly txid: string;
+      readonly expirationAt: Date;
+    },
+    expectedContractType:
+      | "DelegateResourceContract"
+      | "UnDelegateResourceContract" = "DelegateResourceContract",
+  ): Promise<
     | { readonly status: "processing" | "completed" | "failed" | "unknown" }
     | { readonly status: "absent"; readonly solidifiedObservedAt: Date }
   > {
@@ -500,7 +557,7 @@ export class NodeFetchTronDelegationTransport
       const returnedTxid = parseTxid(solidifiedTransaction.body.txID);
       if (
         returnedTxid !== normalized ||
-        !isDelegateResourceTransaction(solidifiedTransaction.body)
+        !isResourceTransaction(solidifiedTransaction.body, expectedContractType)
       ) {
         return { status: "unknown" };
       }
@@ -528,7 +585,7 @@ export class NodeFetchTronDelegationTransport
 
     if (headTransaction.kind === "ok") {
       const returnedTxid = parseTxid(headTransaction.body.txID);
-      return returnedTxid === normalized && isDelegateResourceTransaction(headTransaction.body)
+      return returnedTxid === normalized && isResourceTransaction(headTransaction.body, expectedContractType)
         ? { status: "processing" }
         : { status: "unknown" };
     }
@@ -559,4 +616,14 @@ export class NodeFetchTronDelegationTransport
       solidifiedObservedAt: new Date(observedTimestamp),
     };
   }
+  async getReclaimTransactionObservation(input: {
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<import("../energy/tron-own-pool-energy-provider.js").TronTransactionObservation> {
+    return this.getTransactionObservation(
+      input,
+      "UnDelegateResourceContract",
+    );
+  }
+
 }

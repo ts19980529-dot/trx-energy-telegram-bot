@@ -83,6 +83,27 @@ export interface TronDelegationSigner {
   ): Promise<TronSignedDelegation | undefined>;
 }
 
+export interface TronUnsignedReclaim {
+  readonly txid: string;
+  readonly transaction: Record<string, unknown>;
+}
+
+export interface TronSignedReclaim {
+  readonly txid: string;
+  readonly transaction: Record<string, unknown>;
+}
+
+export interface TronReclaimSigner {
+  sign(input: {
+    readonly attemptKey: string;
+    readonly unsigned: TronUnsignedReclaim;
+  }): Promise<TronSignedReclaim>;
+
+  findSignedByAttemptKey(
+    attemptKey: string,
+  ): Promise<TronSignedReclaim | undefined>;
+}
+
 export interface TronDelegationTransport {
   getEnergyResourceSnapshot(
     ownerAddress: string,
@@ -103,6 +124,23 @@ export interface TronDelegationTransport {
   ): Promise<"accepted" | "rejected" | "unknown">;
 
   getTransactionObservation(input: {
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<TronTransactionObservation>;
+}
+
+export interface TronReclaimTransport {
+  buildEnergyReclaim(input: {
+    readonly ownerAddress: string;
+    readonly recipientAddress: string;
+    readonly balanceSun: bigint;
+  }): Promise<TronUnsignedReclaim>;
+
+  broadcastSignedTransaction(
+    transaction: Record<string, unknown>,
+  ): Promise<"accepted" | "rejected" | "unknown">;
+
+  getReclaimTransactionObservation(input: {
     readonly txid: string;
     readonly expirationAt: Date;
   }): Promise<TronTransactionObservation>;

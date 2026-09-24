@@ -2,6 +2,7 @@ import { once } from "node:events";
 
 import { createPostgresResource } from "../adapters/database/postgres.js";
 import { PostgresTronDelegationSigner } from "../adapters/signer/postgres-tron-delegation-signer.js";
+import { PostgresTronReclaimSigner } from "../adapters/signer/postgres-tron-reclaim-signer.js";
 import { parseSignerRuntimeConfig } from "./signer-config.js";
 import { createSignerHttpServer } from "./signer-http-server.js";
 import {
@@ -35,8 +36,14 @@ async function main(): Promise<void> {
       config.ownerAddress,
       secrets.privateKey,
     );
+    const reclaimSigner = new PostgresTronReclaimSigner(
+      postgres.db,
+      config.ownerAddress,
+      secrets.privateKey,
+    );
     const server = createSignerHttpServer({
       signer,
+      reclaimSigner,
       authToken: secrets.authToken,
     });
 

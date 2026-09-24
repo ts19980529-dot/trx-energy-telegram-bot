@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type {
   TronDelegationSigner,
+  TronReclaimSigner,
   TronSignedDelegation,
+  TronSignedReclaim,
   TronUnsignedDelegation,
+  TronUnsignedReclaim,
 } from "../src/adapters/energy/tron-own-pool-energy-provider.js";
 import { createSignerHttpServer } from "../src/runtime/signer-http-server.js";
 
@@ -47,9 +50,47 @@ class FakeSigner implements TronDelegationSigner {
   }
 }
 
-async function startServer(signer: FakeSigner): Promise<string> {
+class FakeReclaimSigner implements TronReclaimSigner {
+  signCalls = 0;
+  recoverCalls = 0;
+
+  async sign(input: {
+    readonly attemptKey: string;
+    readonly unsigned: TronUnsignedReclaim;
+  }): Promise<TronSignedReclaim> {
+    this.signCalls += 1;
+    return {
+      txid: input.unsigned.txid,
+      transaction: {
+        ...input.unsigned.transaction,
+        txID: input.unsigned.txid,
+        signature: ["1b".padStart(130, "0")],
+      },
+    };
+  }
+
+  async findSignedByAttemptKey(
+    attemptKey: string,
+  ): Promise<TronSignedReclaim | undefined> {
+    this.recoverCalls += 1;
+    if (attemptKey === "missing") return undefined;
+    return {
+      txid: TXID,
+      transaction: {
+        txID: TXID,
+        signature: ["1b".padStart(130, "0")],
+      },
+    };
+  }
+}
+
+async function startServer(
+  signer: FakeSigner,
+  reclaimSigner = new FakeReclaimSigner(),
+): Promise<string> {
   const server = createSignerHttpServer({
     signer,
+    reclaimSigner,
     authToken: "shared-secret",
   });
   servers.push(server);
@@ -128,4 +169,36 @@ describe("TRON signer HTTP server", () => {
     expect(signer.signCalls).toBe(1);
     expect(signer.recoverCalls).toBe(2);
   });
+  it("keeps reclaim signing on dedicated authenticated routes", async () => {
+    const signer = new FakeSigner();
+    const reclaimSigner = new FakeReclaimSigner();
+    const baseUrl = await startServer(signer, reclaimSigner);
+    const headers = {
+      authorization: "Bearer shared-secret",
+      "content-type": "application/json",
+    };
+
+    const signed = await fetch(`${baseUrl}/v1/reclaim/sign`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        attemptKey: "delivery:attempt:1:reclaim:1",
+        unsigned: { txid: TXID, transaction: { txID: TXID } },
+      }),
+    });
+    expect(signed.status).toBe(200);
+    expect(reclaimSigner.signCalls).toBe(1);
+    expect(signer.signCalls).toBe(0);
+
+    const recovered = await fetch(`${baseUrl}/v1/reclaim/recover`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ attemptKey: "delivery:attempt:1:reclaim:1" }),
+    });
+    expect(recovered.status).toBe(200);
+    expect(reclaimSigner.recoverCalls).toBe(1);
+    expect(signer.recoverCalls).toBe(0);
+  });
+
+
 });

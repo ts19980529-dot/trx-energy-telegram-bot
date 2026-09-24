@@ -8,7 +8,9 @@ import {
 
 import type {
   TronDelegationSigner,
+  TronReclaimSigner,
   TronUnsignedDelegation,
+  TronUnsignedReclaim,
 } from "../adapters/energy/tron-own-pool-energy-provider.js";
 
 const MAX_BODY_BYTES = 512 * 1024;
@@ -116,8 +118,16 @@ function parseSignBody(body: unknown): {
   };
 }
 
+function parseReclaimSignBody(body: unknown): {
+  readonly attemptKey: string;
+  readonly unsigned: TronUnsignedReclaim;
+} {
+  return parseSignBody(body);
+}
+
 export function createSignerHttpServer(input: {
   readonly signer: TronDelegationSigner;
+  readonly reclaimSigner: TronReclaimSigner;
   readonly authToken: string;
 }): Server {
   const authToken = input.authToken.trim();
@@ -134,7 +144,12 @@ export function createSignerHttpServer(input: {
 
     if (
       request.method !== "POST" ||
-      (request.url !== "/v1/sign" && request.url !== "/v1/recover")
+      (
+        request.url !== "/v1/sign" &&
+        request.url !== "/v1/recover" &&
+        request.url !== "/v1/reclaim/sign" &&
+        request.url !== "/v1/reclaim/recover"
+      )
     ) {
       json(response, 404, { error: "not_found" });
       return;
@@ -153,9 +168,17 @@ export function createSignerHttpServer(input: {
         json(response, 200, result);
         return;
       }
+      if (request.url === "/v1/reclaim/sign") {
+        const result = await input.reclaimSigner.sign(parseReclaimSignBody(body));
+        json(response, 200, result);
+        return;
+      }
 
       const attemptKey = parseAttemptKey(body);
-      const result = await input.signer.findSignedByAttemptKey(attemptKey);
+      const result =
+        request.url === "/v1/recover"
+          ? await input.signer.findSignedByAttemptKey(attemptKey)
+          : await input.reclaimSigner.findSignedByAttemptKey(attemptKey);
 
       if (result === undefined) {
         json(response, 404, { error: "not_found" });

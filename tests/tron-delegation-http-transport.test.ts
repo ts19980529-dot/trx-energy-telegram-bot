@@ -49,6 +49,31 @@ function delegationTransaction(
   };
 }
 
+function reclaimTransaction(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    txID: TXID,
+    raw_data: {
+      expiration: EXPIRATION_MS,
+      contract: [
+        {
+          type: "UnDelegateResourceContract",
+          parameter: {
+            value: {
+              owner_address: OWNER,
+              receiver_address: RECIPIENT,
+              balance: 18_055_556,
+              resource: "ENERGY",
+            },
+          },
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
 describe("NodeFetchTronDelegationTransport", () => {
   it("reads Energy resource and delegation capacity with the API key", async () => {
     const calls: Array<[string | URL, RequestInit | undefined]> = [];
@@ -416,5 +441,80 @@ describe("NodeFetchTronDelegationTransport", () => {
     });
     expect(calls.some((call) => call.startsWith("GET ") && call.endsWith("/walletsolidity/getnowblock"))).toBe(true);
   });
+
+  it("builds exact UnDelegateResource and observes only that contract type", async () => {
+    const calls: Array<[string | URL, RequestInit | undefined]> = [];
+    const builder = new NodeFetchTronDelegationTransport(
+      baseConfig,
+      async (input, init) => {
+        calls.push([input, init]);
+        return response(reclaimTransaction());
+      },
+    );
+
+    await expect(
+      builder.buildEnergyReclaim({
+        ownerAddress: OWNER,
+        recipientAddress: RECIPIENT,
+        balanceSun: 18_055_556n,
+      }),
+    ).resolves.toEqual({
+      txid: TXID,
+      transaction: reclaimTransaction(),
+    });
+    expect(calls[0]?.[0]).toBe(
+      "https://head.example.test/wallet/undelegateresource",
+    );
+    expect(calls[0]?.[1]?.body).toBe(
+      JSON.stringify({
+        owner_address: OWNER,
+        receiver_address: RECIPIENT,
+        balance: 18_055_556,
+        resource: "ENERGY",
+        visible: true,
+      }),
+    );
+
+    const observer = new NodeFetchTronDelegationTransport(
+      baseConfig,
+      async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/walletsolidity/gettransactionbyid")) {
+          return response(reclaimTransaction({ ret: [{ contractRet: "SUCCESS" }] }));
+        }
+        if (url.endsWith("/walletsolidity/gettransactioninfobyid")) {
+          return response({});
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    );
+    await expect(
+      observer.getReclaimTransactionObservation({
+        txid: TXID,
+        expirationAt: new Date(EXPIRATION_MS),
+      }),
+    ).resolves.toEqual({ status: "completed" });
+
+    const wrongContract = new NodeFetchTronDelegationTransport(
+      baseConfig,
+      async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/walletsolidity/gettransactionbyid")) {
+          return response(delegationTransaction({ ret: [{ contractRet: "SUCCESS" }] }));
+        }
+        if (url.endsWith("/walletsolidity/gettransactioninfobyid")) {
+          return response({});
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    );
+    await expect(
+      wrongContract.getReclaimTransactionObservation({
+        txid: TXID,
+        expirationAt: new Date(EXPIRATION_MS),
+      }),
+    ).resolves.toEqual({ status: "unknown" });
+  });
+
 
 });
