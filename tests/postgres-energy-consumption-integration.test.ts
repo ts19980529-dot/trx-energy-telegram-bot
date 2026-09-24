@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PostgresEnergyUsageRepository } from "../src/adapters/database/postgres-energy-usage-repository.js";
 import { PostgresEnergyProviderJournal } from "../src/adapters/database/postgres-energy-provider-journal.js";
+import { PostgresEnergyProviderAttemptJournal } from "../src/adapters/database/postgres-energy-provider-attempt-journal.js";
 import {
   createPostgresResource,
   type PostgresResource,
@@ -434,4 +435,77 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       "Energy provider transaction identity changed",
     );
   });
+  it("serializes provider transaction attempts and preserves expired txid history across replacement", async () => {
+    const telegramUserId = 9_200_000_000_008n;
+    await customer(telegramUserId, 1);
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:attempt-journal:1",
+    });
+    expect(reservation.kind).toBe("ready");
+    if (reservation.kind !== "ready") throw new Error("Expected ready Energy reservation");
+    const dispatch = await energy.startDispatch({ orderId: reservation.order.id, providerName: "tron-own-pool" });
+    const delivery = dispatch.order.delivery;
+    if (delivery === null) throw new Error("Expected provider delivery");
+
+    const attempts = new PostgresEnergyProviderAttemptJournal(resource.db);
+    const initial = await Promise.all(Array.from({ length: 6 }, () => attempts.getOrCreateCurrentAttempt({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+    })));
+    expect(new Set(initial.map((attempt) => attempt.id)).size).toBe(1);
+    expect(initial[0]).toMatchObject({ attemptNumber: 1, attemptKey: `${delivery.idempotencyKey}:attempt:1`, txid: null, status: "created" });
+
+    const firstTxid = "c".repeat(64);
+    const firstExpiration = new Date(Date.now() - 5_000);
+    const firstSigned = await attempts.claimAttemptTransaction({
+      attemptKey: initial[0].attemptKey,
+      providerName: "tron-own-pool",
+      txid: firstTxid,
+      expirationAt: firstExpiration,
+    });
+    expect(firstSigned.status).toBe("signed");
+    await expect(attempts.claimAttemptTransaction({
+      attemptKey: firstSigned.attemptKey,
+      providerName: "tron-own-pool",
+      txid: "d".repeat(64),
+      expirationAt: firstExpiration,
+    })).rejects.toThrow("Energy provider transaction attempt identity changed");
+    await expect(attempts.recordAttemptState({
+      attemptKey: firstSigned.attemptKey,
+      providerName: "tron-own-pool",
+      status: "expired",
+      lastChainStatus: "unknown",
+    })).rejects.toThrow("Provider transaction attempt cannot expire");
+    await attempts.recordAttemptState({
+      attemptKey: firstSigned.attemptKey,
+      providerName: "tron-own-pool",
+      status: "expired",
+      lastBroadcastResult: "unknown",
+      lastChainStatus: "absent",
+    });
+
+    const replacement = await Promise.all(Array.from({ length: 6 }, () => attempts.getOrCreateCurrentAttempt({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+    })));
+    expect(new Set(replacement.map((attempt) => attempt.id)).size).toBe(1);
+    expect(replacement[0]).toMatchObject({ attemptNumber: 2, attemptKey: `${delivery.idempotencyKey}:attempt:2`, txid: null, status: "created" });
+    const secondTxid = "e".repeat(64);
+    await attempts.claimAttemptTransaction({
+      attemptKey: replacement[0].attemptKey,
+      providerName: "tron-own-pool",
+      txid: secondTxid,
+      expirationAt: new Date(Date.now() + 60_000),
+    });
+    const history = await attempts.listAttempts({ idempotencyKey: delivery.idempotencyKey, providerName: "tron-own-pool" });
+    expect(history.map((attempt) => ({ attemptNumber: attempt.attemptNumber, txid: attempt.txid, status: attempt.status }))).toEqual([
+      { attemptNumber: 1, txid: firstTxid, status: "expired" },
+      { attemptNumber: 2, txid: secondTxid, status: "signed" },
+    ]);
+    expect(await new PostgresEnergyProviderJournal(resource.db).findByIdempotencyKey(delivery.idempotencyKey)).toMatchObject({ providerOrderId: secondTxid });
+  });
+
 });

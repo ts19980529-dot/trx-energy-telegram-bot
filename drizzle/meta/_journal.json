@@ -22,6 +22,13 @@
       "when": 1790040000000,
       "tag": "0002_usdt_payment_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790217600000,
+      "tag": "0003_provider_transaction_attempts",
+      "breakpoints": true
     }
   ]
 }

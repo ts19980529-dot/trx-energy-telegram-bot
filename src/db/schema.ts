@@ -543,3 +543,59 @@ export const providerDeliveries = pgTable(
     ),
   ],
 );
+
+export const providerTransactionAttempts = pgTable(
+  "provider_transaction_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    providerDeliveryId: uuid("provider_delivery_id")
+      .notNull()
+      .references(() => providerDeliveries.id, { onDelete: "restrict" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    attemptKey: text("attempt_key").notNull(),
+    txid: text("txid"),
+    expirationAt: timestamp("expiration_at", { withTimezone: true }),
+    status: text("status").default("created").notNull(),
+    lastBroadcastResult: text("last_broadcast_result"),
+    lastChainStatus: text("last_chain_status"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("provider_transaction_attempts_delivery_number_unique").on(
+      table.providerDeliveryId,
+      table.attemptNumber,
+    ),
+    unique("provider_transaction_attempts_attempt_key_unique").on(
+      table.attemptKey,
+    ),
+    uniqueIndex("provider_transaction_attempts_txid_unique").on(table.txid),
+    uniqueIndex("provider_transaction_attempts_active_delivery_unique")
+      .on(table.providerDeliveryId)
+      .where(
+        sql`${table.status} in ('created', 'signed', 'accepted', 'processing', 'unknown')`,
+      ),
+    check(
+      "provider_transaction_attempts_number_positive",
+      sql`${table.attemptNumber} > 0`,
+    ),
+    check(
+      "provider_transaction_attempts_status_check",
+      sql`${table.status} in ('created', 'signed', 'accepted', 'processing', 'completed', 'failed', 'expired', 'unknown')`,
+    ),
+    check(
+      "provider_transaction_attempts_broadcast_check",
+      sql`${table.lastBroadcastResult} is null or ${table.lastBroadcastResult} in ('accepted', 'rejected', 'unknown')`,
+    ),
+    check(
+      "provider_transaction_attempts_chain_check",
+      sql`${table.lastChainStatus} is null or ${table.lastChainStatus} in ('absent', 'processing', 'completed', 'failed', 'unknown')`,
+    ),
+    check(
+      "provider_transaction_attempts_identity_check",
+      sql`(${table.status} = 'created' and ${table.txid} is null and ${table.expirationAt} is null) or (${table.status} <> 'created' and ${table.txid} is not null and ${table.expirationAt} is not null)`,
+    ),
+  ],
+);
