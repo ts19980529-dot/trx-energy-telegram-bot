@@ -56,6 +56,10 @@ export class EnergyReclaimService {
       }
       for (const order of orders) {
         this.pendingCursor = order.idempotencyKey;
+        // Dispatching orders remain bound to their original provider.
+        if (order.providerName !== null && order.providerName !== this.providerName) {
+          continue;
+        }
         try {
           await this.energyUsage.execute(order);
         } catch (error) {
