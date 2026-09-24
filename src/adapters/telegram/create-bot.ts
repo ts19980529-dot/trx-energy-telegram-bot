@@ -125,8 +125,13 @@ export function createTelegramBot(
     await ctx.reply("请发送需要接收能量的 TRON 地址。");
   });
 
-  bot.hears(/^(?:T[1-9A-HJ-NP-Za-km-z]{33}|41[0-9a-fA-F]{40})$/, async (ctx) => {
-    if (ctx.from === undefined || services.energyUsage === undefined) {
+  bot.hears(/^(?:T\\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
+    if (ctx.from === undefined) {
+      return;
+    }
+
+    if (services.energyUsage === undefined) {
+      await ctx.reply("当前能量服务尚未启用。");
       return;
     }
 
