@@ -251,7 +251,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
 
     expect(refreshed.order.availableCount).toBe(0);
     expect(refreshed.order.reservedCount).toBe(0);
-    expect(provider.createCalls).toBe(1);
+    expect(provider.createCalls).toBe(2);
     expect(provider.statusCalls).toBe(1);
   });
 
@@ -487,6 +487,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       status: "expired",
       lastBroadcastResult: "unknown",
       lastChainStatus: "absent",
+      lastChainObservedAt: new Date(),
     });
 
     const replacement = await Promise.all(Array.from({ length: 6 }, () => attempts.getOrCreateCurrentAttempt({

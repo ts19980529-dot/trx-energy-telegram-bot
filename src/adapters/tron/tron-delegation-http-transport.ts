@@ -91,6 +91,23 @@ function parseTxid(
     ? value.toLowerCase()
     : undefined;
 }
+function solidifiedBlockTimestamp(
+  block: Record<string, unknown>,
+): number | undefined {
+  const header = block.block_header;
+  if (!isRecord(header)) return undefined;
+  const rawData = header.raw_data;
+  if (!isRecord(rawData)) return undefined;
+  const value = rawData.timestamp;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && UNSIGNED_DECIMAL_PATTERN.test(value)) {
+    const parsed = BigInt(value);
+    if (parsed > 0n && parsed <= MAX_SAFE_INTEGER_BIGINT) return Number(parsed);
+  }
+  return undefined;
+}
 
 function contractExecutionStatus(
   transaction: Record<string, unknown>,
@@ -260,6 +277,41 @@ export class NodeFetchTronDelegationTransport
     };
   }
 
+  private async getJson(
+    baseUrl: string,
+    path: string,
+  ): Promise<
+    | { readonly kind: "ok"; readonly body: Record<string, unknown> }
+    | { readonly kind: "not_found" }
+    | { readonly kind: "unavailable" }
+  > {
+    const headers: Record<string, string> = {};
+    if (this.apiKey !== undefined) headers["TRON-PRO-API-KEY"] = this.apiKey;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${baseUrl}${path}`, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      return { kind: "unavailable" };
+    }
+
+    if (!response.ok) return { kind: "unavailable" };
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await response.text());
+    } catch {
+      return { kind: "unavailable" };
+    }
+
+    if (!isRecord(parsed) || "Error" in parsed) return { kind: "unavailable" };
+    if (Object.keys(parsed).length === 0) return { kind: "not_found" };
+    return { kind: "ok", body: parsed };
+  }
   async getEnergyResourceSnapshot(
     ownerAddress: string,
   ): Promise<TronEnergyResourceSnapshot> {
@@ -418,74 +470,54 @@ export class NodeFetchTronDelegationTransport
     return "unknown";
   }
 
-  async getSolidifiedTransactionStatus(
-    txid: string,
-  ): Promise<
-    "processing" | "completed" | "failed" | "unknown"
+  async getTransactionObservation(input: {
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<
+    | { readonly status: "processing" | "completed" | "failed" | "unknown" }
+    | { readonly status: "absent"; readonly solidifiedObservedAt: Date }
   > {
-    const normalized = parseTxid(txid);
-
-    if (normalized === undefined) {
-      throw new Error(
-        "txid must be a 64-character hexadecimal string",
-      );
+    const normalized = parseTxid(input.txid);
+    if (normalized === undefined) throw new Error("txid must be a 64-character hexadecimal string");
+    if (Number.isNaN(input.expirationAt.getTime())) {
+      throw new Error("transaction expiration must be a valid Date");
     }
 
-    const [solidifiedTransaction, solidifiedInfo] =
-      await Promise.all([
-        this.postJson(
-          this.solidifiedBaseUrl,
-          "/walletsolidity/gettransactionbyid",
-          { value: normalized },
-        ),
-        this.postJson(
-          this.solidifiedBaseUrl,
-          "/walletsolidity/gettransactioninfobyid",
-          { value: normalized },
-        ),
-      ]);
+    const [solidifiedTransaction, solidifiedInfo] = await Promise.all([
+      this.postJson(
+        this.solidifiedBaseUrl,
+        "/walletsolidity/gettransactionbyid",
+        { value: normalized },
+      ),
+      this.postJson(
+        this.solidifiedBaseUrl,
+        "/walletsolidity/gettransactioninfobyid",
+        { value: normalized },
+      ),
+    ]);
 
-    if (
-      solidifiedTransaction.kind === "ok"
-    ) {
-      const returnedTxid = parseTxid(
-        solidifiedTransaction.body.txID,
-      );
-
+    if (solidifiedTransaction.kind === "ok") {
+      const returnedTxid = parseTxid(solidifiedTransaction.body.txID);
       if (
         returnedTxid !== normalized ||
-        !isDelegateResourceTransaction(
-          solidifiedTransaction.body,
-        )
+        !isDelegateResourceTransaction(solidifiedTransaction.body)
       ) {
-        return "unknown";
+        return { status: "unknown" };
       }
 
       const receiptStatus =
         solidifiedInfo.kind === "ok"
-          ? receiptExecutionStatus(
-              solidifiedInfo.body,
-            )
+          ? receiptExecutionStatus(solidifiedInfo.body)
           : "unknown";
-      const bodyStatus = contractExecutionStatus(
-        solidifiedTransaction.body,
-      );
+      const bodyStatus = contractExecutionStatus(solidifiedTransaction.body);
 
-      if (
-        receiptStatus === "failed" ||
-        bodyStatus === "failed"
-      ) {
-        return "failed";
+      if (receiptStatus === "failed" || bodyStatus === "failed") {
+        return { status: "failed" };
       }
-
-      if (
-        receiptStatus === "success" ||
-        bodyStatus === "success"
-      ) {
-        return "completed";
+      if (receiptStatus === "success" || bodyStatus === "success") {
+        return { status: "completed" };
       }
-
-      return "processing";
+      return { status: "processing" };
     }
 
     const headTransaction = await this.postJson(
@@ -495,19 +527,36 @@ export class NodeFetchTronDelegationTransport
     );
 
     if (headTransaction.kind === "ok") {
-      const returnedTxid = parseTxid(
-        headTransaction.body.txID,
-      );
-
-      return returnedTxid === normalized
-        ? "processing"
-        : "unknown";
+      const returnedTxid = parseTxid(headTransaction.body.txID);
+      return returnedTxid === normalized && isDelegateResourceTransaction(headTransaction.body)
+        ? { status: "processing" }
+        : { status: "unknown" };
     }
 
-    return solidifiedTransaction.kind ===
-        "not_found" &&
-      headTransaction.kind === "not_found"
-      ? "unknown"
-      : "processing";
+    if (
+      solidifiedTransaction.kind !== "not_found" ||
+      headTransaction.kind !== "not_found"
+    ) {
+      return { status: "unknown" };
+    }
+
+    const solidifiedBlock = await this.getJson(
+      this.solidifiedBaseUrl,
+      "/walletsolidity/getnowblock",
+    );
+    if (solidifiedBlock.kind !== "ok") return { status: "unknown" };
+
+    const observedTimestamp = solidifiedBlockTimestamp(solidifiedBlock.body);
+    if (
+      observedTimestamp === undefined ||
+      observedTimestamp < input.expirationAt.getTime()
+    ) {
+      return { status: "unknown" };
+    }
+
+    return {
+      status: "absent",
+      solidifiedObservedAt: new Date(observedTimestamp),
+    };
   }
 }

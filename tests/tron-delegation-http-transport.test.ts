@@ -4,6 +4,7 @@ import { NodeFetchTronDelegationTransport } from "../src/adapters/tron/tron-dele
 import type { TronHttpTransportConfig } from "../src/adapters/tron/tron-http-transport.js";
 
 const TXID = "a".repeat(64);
+const EXPIRATION_MS = 1_800_000_000_000;
 const OWNER = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8";
 const RECIPIENT = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
 
@@ -29,6 +30,7 @@ function delegationTransaction(
   return {
     txID: TXID,
     raw_data: {
+      expiration: EXPIRATION_MS,
       contract: [
         {
           type: "DelegateResourceContract",
@@ -201,7 +203,7 @@ describe("NodeFetchTronDelegationTransport", () => {
       falseTransport.broadcastSignedTransaction(
         delegationTransaction(),
       ),
-    ).resolves.toBe("unknown");
+    ).resolves.toEqual({ status: "unknown" });
 
     const networkTransport = new NodeFetchTronDelegationTransport(
       baseConfig,
@@ -212,7 +214,7 @@ describe("NodeFetchTronDelegationTransport", () => {
       networkTransport.broadcastSignedTransaction(
         delegationTransaction(),
       ),
-    ).resolves.toBe("unknown");
+    ).resolves.toEqual({ status: "unknown" });
   });
 
   it("marks a solidified successful DelegateResource transaction completed", async () => {
@@ -250,8 +252,8 @@ describe("NodeFetchTronDelegationTransport", () => {
     );
 
     await expect(
-      transport.getSolidifiedTransactionStatus(TXID),
-    ).resolves.toBe("completed");
+      transport.getTransactionObservation({ txid: TXID, expirationAt: new Date(EXPIRATION_MS) }),
+    ).resolves.toEqual({ status: "completed" });
   });
 
   it("keeps a head-only transaction processing until solidity confirms it", async () => {
@@ -277,19 +279,32 @@ describe("NodeFetchTronDelegationTransport", () => {
     );
 
     await expect(
-      transport.getSolidifiedTransactionStatus(TXID),
-    ).resolves.toBe("processing");
+      transport.getTransactionObservation({ txid: TXID, expirationAt: new Date(EXPIRATION_MS) }),
+    ).resolves.toEqual({ status: "processing" });
   });
 
-  it("returns unknown when the transaction is absent from both head and solidity", async () => {
+  it("keeps absence unknown until the solidified chain reaches expiration", async () => {
     const transport = new NodeFetchTronDelegationTransport(
       baseConfig,
-      async () => response({}),
+      async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/walletsolidity/getnowblock")) {
+          return response({
+            block_header: {
+              raw_data: { timestamp: EXPIRATION_MS - 1 },
+            },
+          });
+        }
+        return response({});
+      },
     );
 
     await expect(
-      transport.getSolidifiedTransactionStatus(TXID),
-    ).resolves.toBe("unknown");
+      transport.getTransactionObservation({
+        txid: TXID,
+        expirationAt: new Date(EXPIRATION_MS),
+      }),
+    ).resolves.toEqual({ status: "unknown" });
   });
 
   it("fails closed on a mismatched txid or wrong contract type", async () => {
@@ -316,10 +331,8 @@ describe("NodeFetchTronDelegationTransport", () => {
       );
 
     await expect(
-      wrongTxidTransport.getSolidifiedTransactionStatus(
-        TXID,
-      ),
-    ).resolves.toBe("unknown");
+      wrongTxidTransport.getTransactionObservation({ txid: TXID, expirationAt: new Date(EXPIRATION_MS) }),
+    ).resolves.toEqual({ status: "unknown" });
 
     const wrongTypeTransport =
       new NodeFetchTronDelegationTransport(
@@ -349,10 +362,8 @@ describe("NodeFetchTronDelegationTransport", () => {
       );
 
     await expect(
-      wrongTypeTransport.getSolidifiedTransactionStatus(
-        TXID,
-      ),
-    ).resolves.toBe("unknown");
+      wrongTypeTransport.getTransactionObservation({ txid: TXID, expirationAt: new Date(EXPIRATION_MS) }),
+    ).resolves.toEqual({ status: "unknown" });
   });
 
   it("rejects unsafe delegation amounts before a network call", async () => {
@@ -376,4 +387,34 @@ describe("NodeFetchTronDelegationTransport", () => {
 
     expect(callCount).toBe(0);
   });
+  it("proves absence only after head and solidity miss the tx and solidified time reaches expiration", async () => {
+    const calls: string[] = [];
+    const transport = new NodeFetchTronDelegationTransport(
+      baseConfig,
+      async (input, init) => {
+        const url = input.toString();
+        calls.push(`${init?.method ?? ""} ${url}`);
+        if (url.endsWith("/walletsolidity/getnowblock")) {
+          return response({
+            block_header: {
+              raw_data: { timestamp: EXPIRATION_MS },
+            },
+          });
+        }
+        return response({});
+      },
+    );
+
+    await expect(
+      transport.getTransactionObservation({
+        txid: TXID,
+        expirationAt: new Date(EXPIRATION_MS),
+      }),
+    ).resolves.toEqual({
+      status: "absent",
+      solidifiedObservedAt: new Date(EXPIRATION_MS),
+    });
+    expect(calls.some((call) => call.startsWith("GET ") && call.endsWith("/walletsolidity/getnowblock"))).toBe(true);
+  });
+
 });

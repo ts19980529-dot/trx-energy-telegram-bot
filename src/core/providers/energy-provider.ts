@@ -23,8 +23,10 @@ export interface EnergyProvider {
   readonly name: string;
 
   /**
-   * Must be idempotent for the same idempotencyKey.
-   * A retry with the same key must not create a second provider order.
+   * Must be idempotent for the same business-delivery idempotencyKey.
+   * A retry must never overlap active external attempts. A replacement
+   * chain transaction is allowed only after the provider has proven the
+   * previous attempt expired and was absent from the finalized chain.
    */
   createDelivery(request: EnergyDeliveryRequest): Promise<EnergyDeliveryResult>;
 

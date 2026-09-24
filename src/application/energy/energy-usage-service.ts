@@ -253,10 +253,13 @@ export class EnergyUsageService {
     }
 
     if (!dispatch.created) {
-      let recovered: EnergyOrderStatus | undefined;
+      let recovered: EnergyDeliveryResult | EnergyOrderStatus | undefined;
 
       try {
-        recovered = await this.recoverExistingDelivery(delivery);
+        recovered = await this.continueExistingDelivery(
+          dispatch.order,
+          delivery,
+        );
       } catch {
         return resultFromOrder(dispatch.order);
       }
@@ -330,10 +333,13 @@ export class EnergyUsageService {
       throw new Error("Energy provider changed for an existing order");
     }
 
-    let recovered: EnergyOrderStatus | undefined;
+    let recovered: EnergyDeliveryResult | EnergyOrderStatus | undefined;
 
     try {
-      recovered = await this.recoverExistingDelivery(order.delivery);
+      recovered = await this.continueExistingDelivery(
+        order,
+        order.delivery,
+      );
     } catch {
       return resultFromOrder(order);
     }
@@ -345,6 +351,21 @@ export class EnergyUsageService {
     return this.applyProviderResult(order.id, order.delivery, recovered);
   }
 
+  private async continueExistingDelivery(
+    order: EnergyConsumptionSnapshot,
+    delivery: EnergyDeliverySnapshot,
+  ): Promise<EnergyDeliveryResult | EnergyOrderStatus | undefined> {
+    try {
+      return await this.provider.createDelivery({
+        idempotencyKey: delivery.idempotencyKey,
+        internalOrderId: order.id,
+        recipientAddress: order.recipientAddress,
+        energyAmount: order.energyAmount,
+      });
+    } catch {
+      return this.recoverExistingDelivery(delivery);
+    }
+  }
   private async recoverExistingDelivery(
     delivery: EnergyDeliverySnapshot,
   ): Promise<EnergyOrderStatus | undefined> {

@@ -1480,6 +1480,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_chain_observed_at": {
+          "name": "last_chain_observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1581,7 +1587,7 @@
         },
         "provider_transaction_attempts_identity_check": {
           "name": "provider_transaction_attempts_identity_check",
-          "value": "(\"provider_transaction_attempts\".\"status\" = 'created' and \"provider_transaction_attempts\".\"txid\" is null and \"provider_transaction_attempts\".\"expiration_at\" is null) or (\"provider_transaction_attempts\".\"status\" <> 'created' and \"provider_transaction_attempts\".\"txid\" is not null and \"provider_transaction_attempts\".\"expiration_at\" is not null)"
+          "value": "(\"provider_transaction_attempts\".\"status\" in ('created', 'failed') and \"provider_transaction_attempts\".\"txid\" is null and \"provider_transaction_attempts\".\"expiration_at\" is null) or (\"provider_transaction_attempts\".\"status\" <> 'created' and \"provider_transaction_attempts\".\"txid\" is not null and \"provider_transaction_attempts\".\"expiration_at\" is not null)"
         }
       },
       "isRLSEnabled": false

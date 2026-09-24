@@ -60,7 +60,7 @@ export interface TronDelegationSigner {
    * exact same transaction identity instead of signing a replacement.
    */
   sign(input: {
-    readonly idempotencyKey: string;
+    readonly attemptKey: string;
     readonly unsigned: TronUnsignedDelegation;
   }): Promise<TronSignedDelegation>;
 
@@ -69,8 +69,8 @@ export interface TronDelegationSigner {
    * timeout/restart. This is required so a signed-but-not-yet-broadcast
    * transaction can be safely rebroadcast without creating a second txID.
    */
-  findSignedByIdempotencyKey(
-    idempotencyKey: string,
+  findSignedByAttemptKey(
+    attemptKey: string,
   ): Promise<TronSignedDelegation | undefined>;
 }
 
@@ -93,11 +93,10 @@ export interface TronDelegationTransport {
     transaction: Record<string, unknown>,
   ): Promise<"accepted" | "rejected" | "unknown">;
 
-  getSolidifiedTransactionStatus(
-    txid: string,
-  ): Promise<
-    "processing" | "completed" | "failed" | "unknown"
-  >;
+  getTransactionObservation(input: {
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<TronTransactionObservation>;
 }
 
 export interface EnergyProviderJournalEntry {
@@ -129,6 +128,76 @@ export interface EnergyProviderJournal {
     readonly providerOrderId: string;
   }): Promise<void>;
 }
+export type ProviderTransactionAttemptStatus =
+  | "created"
+  | "signed"
+  | "accepted"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "expired"
+  | "unknown";
+
+export type ProviderBroadcastResult =
+  | "accepted"
+  | "rejected"
+  | "unknown";
+
+export type ProviderChainStatus =
+  | "absent"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "unknown";
+
+export type TronTransactionObservation =
+  | { readonly status: "processing" | "completed" | "failed" | "unknown" }
+  | {
+      readonly status: "absent";
+      readonly solidifiedObservedAt: Date;
+    };
+
+export interface ProviderTransactionAttemptEntry {
+  readonly id: string;
+  readonly providerDeliveryId: string;
+  readonly attemptNumber: number;
+  readonly attemptKey: string;
+  readonly txid: string | null;
+  readonly expirationAt: Date | null;
+  readonly status: ProviderTransactionAttemptStatus;
+  readonly lastBroadcastResult: ProviderBroadcastResult | null;
+  readonly lastChainStatus: ProviderChainStatus | null;
+  readonly lastChainObservedAt: Date | null;
+}
+
+export interface EnergyProviderAttemptJournal {
+  getOrCreateCurrentAttempt(input: {
+    readonly idempotencyKey: string;
+    readonly providerName: string;
+  }): Promise<ProviderTransactionAttemptEntry>;
+
+  claimAttemptTransaction(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<ProviderTransactionAttemptEntry>;
+
+  recordAttemptState(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly status: ProviderTransactionAttemptStatus;
+    readonly lastBroadcastResult?: ProviderBroadcastResult;
+    readonly lastChainStatus?: ProviderChainStatus;
+    readonly lastChainObservedAt?: Date;
+  }): Promise<ProviderTransactionAttemptEntry>;
+
+  listAttempts(input: {
+    readonly idempotencyKey: string;
+    readonly providerName: string;
+  }): Promise<readonly ProviderTransactionAttemptEntry[]>;
+}
+
 
 function requireTxid(
   value: string,
@@ -210,17 +279,47 @@ function assertSignedTransaction(
   };
 }
 
-function deliveryStatusFromOrderStatus(
-  status: EnergyOrderStatus["status"],
-): EnergyDeliveryResult["status"] {
-  return status === "unknown"
-    ? "processing"
-    : status;
+function transactionExpirationAt(
+  transaction: Record<string, unknown>,
+): Date {
+  const rawData = transaction.raw_data;
+  if (typeof rawData !== "object" || rawData === null || Array.isArray(rawData)) {
+    throw new Error("TRON transaction is missing raw_data");
+  }
+
+  const value = (rawData as Record<string, unknown>).expiration;
+  let milliseconds: number;
+
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    milliseconds = value;
+  } else if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
+    const parsed = BigInt(value);
+    if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("TRON transaction expiration is outside the safe integer range");
+    }
+    milliseconds = Number(parsed);
+  } else {
+    throw new Error("TRON transaction expiration is missing or malformed");
+  }
+
+  const result = new Date(milliseconds);
+  if (Number.isNaN(result.getTime())) {
+    throw new Error("TRON transaction expiration is invalid");
+  }
+  return result;
 }
 
-export class TronOwnPoolEnergyProvider
-  implements EnergyProvider
-{
+function asOrderStatus(
+  result: EnergyDeliveryResult,
+): EnergyOrderStatus {
+  return {
+    providerOrderId: result.providerOrderId,
+    idempotencyKey: result.idempotencyKey,
+    status: result.status === "accepted" ? "processing" : result.status,
+  };
+}
+
+export class TronOwnPoolEnergyProvider implements EnergyProvider {
   readonly name = "tron-own-pool";
 
   constructor(
@@ -228,340 +327,308 @@ export class TronOwnPoolEnergyProvider
     private readonly transport: TronDelegationTransport,
     private readonly signer: TronDelegationSigner,
     private readonly journal: EnergyProviderJournal,
+    private readonly attemptJournal: EnergyProviderAttemptJournal,
   ) {
     if (ownerAddress.trim().length === 0) {
-      throw new Error(
-        "ownerAddress must not be empty",
-      );
+      throw new Error("ownerAddress must not be empty");
     }
   }
 
   async createDelivery(
     request: EnergyDeliveryRequest,
   ): Promise<EnergyDeliveryResult> {
-    const existing =
-      await this.journal.findByIdempotencyKey(
-        request.idempotencyKey,
-      );
-
-    if (
-      existing !== undefined &&
-      existing.providerName !== this.name
-    ) {
-      throw new Error(
-        "Energy provider journal owner changed",
-      );
+    const existing = await this.journal.findByIdempotencyKey(request.idempotencyKey);
+    if (existing === undefined) {
+      throw new Error("Energy provider journal row is missing");
     }
-
-    if (existing?.status === "failed") {
+    if (existing.providerName !== this.name) {
+      throw new Error("Energy provider journal owner changed");
+    }
+    if (existing.status === "failed") {
       return {
-        providerOrderId:
-          existing.providerOrderId,
+        providerOrderId: existing.providerOrderId,
         idempotencyKey: request.idempotencyKey,
         status: "failed",
       };
     }
 
-    if (existing?.providerOrderId !== null &&
-        existing?.providerOrderId !== undefined) {
-      const status = await this.getDeliveryStatus(
-        existing.providerOrderId,
-      );
-
-      if (status.status !== "unknown") {
-        return {
-          providerOrderId:
-            status.providerOrderId,
-          idempotencyKey:
-            status.idempotencyKey,
-          status:
-            deliveryStatusFromOrderStatus(
-              status.status,
-            ),
-        };
-      }
-
-      const signed =
-        await this.recoverSignedTransaction(
-          request.idempotencyKey,
-          existing.providerOrderId,
-        );
-
-      if (signed === undefined) {
-        return {
-          providerOrderId:
-            existing.providerOrderId,
-          idempotencyKey:
-            request.idempotencyKey,
-          status: "processing",
-        };
-      }
-
-      return this.broadcastClaimedTransaction(
-        request.idempotencyKey,
-        signed,
-      );
-    }
-
-    const previouslySigned =
-      await this.recoverSignedTransaction(
-        request.idempotencyKey,
-      );
-
-    if (previouslySigned !== undefined) {
-      await this.journal.claimProviderOrderId({
-        idempotencyKey:
-          request.idempotencyKey,
-        providerName: this.name,
-        providerOrderId:
-          previouslySigned.txid,
-      });
-
-      return this.broadcastClaimedTransaction(
-        request.idempotencyKey,
-        previouslySigned,
-      );
-    }
-
-    const snapshot =
-      await this.transport.getEnergyResourceSnapshot(
-        this.ownerAddress,
-      );
-    const balanceSun = requiredDelegationSun(
-      request.energyAmount,
-      snapshot,
-    );
-    const maxDelegatable =
-      await this.transport.getCanDelegatedEnergySun(
-        this.ownerAddress,
-      );
-
-    if (maxDelegatable < balanceSun) {
-      return {
-        providerOrderId: null,
-        idempotencyKey:
-          request.idempotencyKey,
-        status: "failed",
-      };
-    }
-
-    const unsigned =
-      await this.transport.buildEnergyDelegation({
-        ownerAddress: this.ownerAddress,
-        recipientAddress:
-          request.recipientAddress,
-        balanceSun,
-      });
-    const unsignedTxid = requireTxid(
-      unsigned.txid,
-      "unsigned txid",
-    );
-
-    const signed = assertSignedTransaction(
-      await this.signer.sign({
-        idempotencyKey:
-          request.idempotencyKey,
-        unsigned: {
-          ...unsigned,
-          txid: unsignedTxid,
-        },
-      }),
-      unsignedTxid,
-    );
-
-    await this.journal.claimProviderOrderId({
-      idempotencyKey:
-        request.idempotencyKey,
+    const attempt = await this.attemptJournal.getOrCreateCurrentAttempt({
+      idempotencyKey: request.idempotencyKey,
       providerName: this.name,
-      providerOrderId: signed.txid,
     });
-
-    return this.broadcastClaimedTransaction(
-      request.idempotencyKey,
-      signed,
-    );
+    return this.advanceAttempt(request, attempt, true);
   }
 
   async getDeliveryStatus(
     providerOrderId: string,
   ): Promise<EnergyOrderStatus> {
-    const txid = requireTxid(
-      providerOrderId,
-      "providerOrderId",
-    );
-    const entry =
-      await this.journal.findByProviderOrderId({
-        providerName: this.name,
-        providerOrderId: txid,
-      });
-
-    if (entry === undefined) {
-      throw new Error(
-        "TRON Energy provider order is not journaled",
-      );
-    }
-
-    if (entry.status === "failed") {
-      return {
-        providerOrderId: txid,
-        idempotencyKey:
-          entry.idempotencyKey,
-        status: "failed",
-      };
-    }
-
-    const status =
-      await this.transport.getSolidifiedTransactionStatus(
-        txid,
-      );
-
-    return {
+    const txid = requireTxid(providerOrderId, "providerOrderId");
+    const entry = await this.journal.findByProviderOrderId({
+      providerName: this.name,
       providerOrderId: txid,
-      idempotencyKey:
-        entry.idempotencyKey,
-      status,
-    };
+    });
+    if (entry === undefined) {
+      throw new Error("TRON Energy provider order is not journaled");
+    }
+
+    const attempts = await this.attemptJournal.listAttempts({
+      idempotencyKey: entry.idempotencyKey,
+      providerName: this.name,
+    });
+    const attempt = attempts.find((candidate) => candidate.txid === txid);
+    if (attempt === undefined) {
+      throw new Error("TRON Energy provider transaction attempt is not journaled");
+    }
+
+    return asOrderStatus(
+      await this.reconcileAttempt(entry.idempotencyKey, attempt),
+    );
   }
 
   async findDeliveryByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<EnergyOrderStatus | undefined> {
-    const entry =
-      await this.journal.findByIdempotencyKey(
-        idempotencyKey,
-      );
-
-    if (
-      entry === undefined ||
-      entry.providerName !== this.name
-    ) {
-      return undefined;
-    }
-
+    const entry = await this.journal.findByIdempotencyKey(idempotencyKey);
+    if (entry === undefined || entry.providerName !== this.name) return undefined;
     if (entry.status === "failed") {
       return {
-        providerOrderId:
-          entry.providerOrderId,
-        idempotencyKey:
-          entry.idempotencyKey,
+        providerOrderId: entry.providerOrderId,
+        idempotencyKey,
         status: "failed",
       };
     }
 
-    if (entry.providerOrderId !== null) {
-      const status =
-        await this.getDeliveryStatus(
-          entry.providerOrderId,
-        );
-
-      if (status.status !== "unknown") {
-        return status;
-      }
-
-      const signed =
-        await this.recoverSignedTransaction(
-          idempotencyKey,
-          entry.providerOrderId,
-        );
-
-      if (signed === undefined) {
-        return {
-          providerOrderId:
-            entry.providerOrderId,
-          idempotencyKey,
-          status: "unknown",
-        };
-      }
-
-      return this.rebroadcastForRecovery(
-        idempotencyKey,
-        signed,
-      );
-    }
-
-    const signed =
-      await this.recoverSignedTransaction(
-        idempotencyKey,
-      );
-
-    if (signed === undefined) {
-      return undefined;
-    }
-
-    await this.journal.claimProviderOrderId({
+    const attempts = await this.attemptJournal.listAttempts({
       idempotencyKey,
       providerName: this.name,
-      providerOrderId: signed.txid,
+    });
+    const attempt = attempts.at(-1);
+    if (attempt === undefined) return undefined;
+
+    if (attempt.status === "created") {
+      const recovered = await this.recoverSignedTransaction(attempt.attemptKey);
+      if (recovered === undefined) return undefined;
+      const expirationAt = transactionExpirationAt(recovered.transaction);
+      const claimed = await this.attemptJournal.claimAttemptTransaction({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        txid: recovered.txid,
+        expirationAt,
+      });
+      return asOrderStatus(
+        await this.broadcastAttempt(idempotencyKey, claimed, recovered),
+      );
+    }
+
+    if (attempt.status === "expired") return undefined;
+    return asOrderStatus(await this.reconcileAttempt(idempotencyKey, attempt));
+  }
+
+  private async advanceAttempt(
+    request: EnergyDeliveryRequest,
+    attempt: ProviderTransactionAttemptEntry,
+    allowReplacement: boolean,
+  ): Promise<EnergyDeliveryResult> {
+    if (attempt.status === "completed" || attempt.status === "failed") {
+      return {
+        providerOrderId: attempt.txid,
+        idempotencyKey: request.idempotencyKey,
+        status: attempt.status,
+      };
+    }
+
+    if (attempt.status === "created") {
+      return this.startAttempt(request, attempt);
+    }
+
+    if (attempt.status === "expired") {
+      const next = await this.attemptJournal.getOrCreateCurrentAttempt({
+        idempotencyKey: request.idempotencyKey,
+        providerName: this.name,
+      });
+      return this.advanceAttempt(request, next, false);
+    }
+
+    const reconciled = await this.reconcileAttempt(request.idempotencyKey, attempt);
+    const refreshed = (await this.attemptJournal.listAttempts({
+      idempotencyKey: request.idempotencyKey,
+      providerName: this.name,
+    })).at(-1);
+
+    if (
+      allowReplacement &&
+      refreshed !== undefined &&
+      refreshed.status === "expired"
+    ) {
+      const next = await this.attemptJournal.getOrCreateCurrentAttempt({
+        idempotencyKey: request.idempotencyKey,
+        providerName: this.name,
+      });
+      if (next.id !== refreshed.id) {
+        return this.advanceAttempt(request, next, false);
+      }
+    }
+
+    return reconciled;
+  }
+
+  private async startAttempt(
+    request: EnergyDeliveryRequest,
+    attempt: ProviderTransactionAttemptEntry,
+  ): Promise<EnergyDeliveryResult> {
+    const recovered = await this.recoverSignedTransaction(attempt.attemptKey);
+    if (recovered !== undefined) {
+      const expirationAt = transactionExpirationAt(recovered.transaction);
+      const claimed = await this.attemptJournal.claimAttemptTransaction({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        txid: recovered.txid,
+        expirationAt,
+      });
+      return this.broadcastAttempt(request.idempotencyKey, claimed, recovered);
+    }
+
+    const snapshot = await this.transport.getEnergyResourceSnapshot(this.ownerAddress);
+    const balanceSun = requiredDelegationSun(request.energyAmount, snapshot);
+    const maxDelegatable = await this.transport.getCanDelegatedEnergySun(this.ownerAddress);
+    if (maxDelegatable < balanceSun) {
+      await this.attemptJournal.recordAttemptState({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        status: "failed",
+      });
+      return {
+        providerOrderId: null,
+        idempotencyKey: request.idempotencyKey,
+        status: "failed",
+      };
+    }
+
+    const unsigned = await this.transport.buildEnergyDelegation({
+      ownerAddress: this.ownerAddress,
+      recipientAddress: request.recipientAddress,
+      balanceSun,
+    });
+    const unsignedTxid = requireTxid(unsigned.txid, "unsigned txid");
+    const expirationAt = transactionExpirationAt(unsigned.transaction);
+    const signed = assertSignedTransaction(
+      await this.signer.sign({
+        attemptKey: attempt.attemptKey,
+        unsigned: { ...unsigned, txid: unsignedTxid },
+      }),
+      unsignedTxid,
+    );
+    if (transactionExpirationAt(signed.transaction).getTime() !== expirationAt.getTime()) {
+      throw new Error("TRON signer changed transaction expiration");
+    }
+
+    const claimed = await this.attemptJournal.claimAttemptTransaction({
+      attemptKey: attempt.attemptKey,
+      providerName: this.name,
+      txid: signed.txid,
+      expirationAt,
+    });
+    return this.broadcastAttempt(request.idempotencyKey, claimed, signed);
+  }
+
+  private async reconcileAttempt(
+    idempotencyKey: string,
+    attempt: ProviderTransactionAttemptEntry,
+  ): Promise<EnergyDeliveryResult> {
+    if (attempt.status === "completed" || attempt.status === "failed") {
+      return { providerOrderId: attempt.txid, idempotencyKey, status: attempt.status };
+    }
+    if (attempt.txid === null || attempt.expirationAt === null) {
+      throw new Error("Active TRON provider attempt is missing transaction identity");
+    }
+
+    const observation = await this.transport.getTransactionObservation({
+      txid: attempt.txid,
+      expirationAt: attempt.expirationAt,
     });
 
-    return this.rebroadcastForRecovery(
-      idempotencyKey,
-      signed,
-    );
+    if (observation.status === "completed" || observation.status === "failed") {
+      await this.attemptJournal.recordAttemptState({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        status: observation.status,
+        lastChainStatus: observation.status,
+      });
+      return { providerOrderId: attempt.txid, idempotencyKey, status: observation.status };
+    }
+
+    if (observation.status === "processing") {
+      await this.attemptJournal.recordAttemptState({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        status: "processing",
+        lastChainStatus: "processing",
+      });
+      return { providerOrderId: attempt.txid, idempotencyKey, status: "processing" };
+    }
+
+    if (observation.status === "absent") {
+      await this.attemptJournal.recordAttemptState({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        status: "expired",
+        lastChainStatus: "absent",
+        lastChainObservedAt: observation.solidifiedObservedAt,
+      });
+      return { providerOrderId: attempt.txid, idempotencyKey, status: "processing" };
+    }
+
+    await this.attemptJournal.recordAttemptState({
+      attemptKey: attempt.attemptKey,
+      providerName: this.name,
+      status: "unknown",
+      lastChainStatus: "unknown",
+    });
+    const signed = await this.recoverSignedTransaction(attempt.attemptKey, attempt.txid);
+    if (signed === undefined) {
+      return { providerOrderId: attempt.txid, idempotencyKey, status: "processing" };
+    }
+    return this.broadcastAttempt(idempotencyKey, attempt, signed);
   }
 
   private async recoverSignedTransaction(
-    idempotencyKey: string,
+    attemptKey: string,
     expectedTxid?: string,
   ): Promise<TronSignedDelegation | undefined> {
-    const signed =
-      await this.signer.findSignedByIdempotencyKey(
-        idempotencyKey,
-      );
-
-    return signed === undefined
-      ? undefined
-      : assertSignedTransaction(
-          signed,
-          expectedTxid,
-        );
+    const signed = await this.signer.findSignedByAttemptKey(attemptKey);
+    return signed === undefined ? undefined : assertSignedTransaction(signed, expectedTxid);
   }
 
-  private async broadcastClaimedTransaction(
+  private async broadcastAttempt(
     idempotencyKey: string,
+    attempt: ProviderTransactionAttemptEntry,
     signed: TronSignedDelegation,
   ): Promise<EnergyDeliveryResult> {
-    const broadcast =
-      await this.transport.broadcastSignedTransaction(
-        signed.transaction,
-      );
-
+    const broadcast = await this.transport.broadcastSignedTransaction(signed.transaction);
     if (broadcast === "rejected") {
-      return {
-        providerOrderId: signed.txid,
-        idempotencyKey,
+      await this.attemptJournal.recordAttemptState({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
         status: "failed",
-      };
+        lastBroadcastResult: "rejected",
+      });
+      return { providerOrderId: signed.txid, idempotencyKey, status: "failed" };
     }
 
+    const nextStatus =
+      broadcast === "accepted"
+        ? attempt.status === "processing" ? "processing" : "accepted"
+        : "unknown";
+    await this.attemptJournal.recordAttemptState({
+      attemptKey: attempt.attemptKey,
+      providerName: this.name,
+      status: nextStatus,
+      lastBroadcastResult: broadcast,
+    });
     return {
       providerOrderId: signed.txid,
       idempotencyKey,
-      status:
-        broadcast === "accepted"
-          ? "accepted"
-          : "processing",
-    };
-  }
-
-  private async rebroadcastForRecovery(
-    idempotencyKey: string,
-    signed: TronSignedDelegation,
-  ): Promise<EnergyOrderStatus> {
-    const result =
-      await this.broadcastClaimedTransaction(
-        idempotencyKey,
-        signed,
-      );
-
-    return {
-      providerOrderId:
-        result.providerOrderId,
-      idempotencyKey,
-      status:
-        result.status === "failed"
-          ? "failed"
-          : "processing",
+      status: broadcast === "accepted" ? "accepted" : "processing",
     };
   }
 }

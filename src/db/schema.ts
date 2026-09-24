@@ -558,6 +558,7 @@ export const providerTransactionAttempts = pgTable(
     status: text("status").default("created").notNull(),
     lastBroadcastResult: text("last_broadcast_result"),
     lastChainStatus: text("last_chain_status"),
+    lastChainObservedAt: timestamp("last_chain_observed_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -595,7 +596,7 @@ export const providerTransactionAttempts = pgTable(
     ),
     check(
       "provider_transaction_attempts_identity_check",
-      sql`(${table.status} = 'created' and ${table.txid} is null and ${table.expirationAt} is null) or (${table.status} <> 'created' and ${table.txid} is not null and ${table.expirationAt} is not null)`,
+      sql`(${table.status} in ('created', 'failed') and ${table.txid} is null and ${table.expirationAt} is null) or (${table.status} <> 'created' and ${table.txid} is not null and ${table.expirationAt} is not null)`,
     ),
   ],
 );

@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   requiredDelegationSun,
   TronOwnPoolEnergyProvider,
+  type EnergyProviderAttemptJournal,
   type EnergyProviderJournal,
   type EnergyProviderJournalEntry,
+  type ProviderTransactionAttemptEntry,
+  type ProviderTransactionAttemptStatus,
+  type TronTransactionObservation,
   type TronDelegationSigner,
   type TronDelegationTransport,
   type TronEnergyResourceSnapshot,
@@ -78,48 +82,160 @@ class MemoryJournal implements EnergyProviderJournal {
       providerOrderId: input.providerOrderId,
     });
   }
+  projectProviderOrderId(
+    idempotencyKey: string,
+    providerOrderId: string,
+  ): void {
+    const existing = this.byIdempotency.get(idempotencyKey);
+    if (existing === undefined) throw new Error("missing journal row");
+    this.byIdempotency.set(idempotencyKey, { ...existing, providerOrderId });
+  }
 }
 
+class MemoryAttemptJournal implements EnergyProviderAttemptJournal {
+  private readonly attempts = new Map<string, ProviderTransactionAttemptEntry[]>();
+  onClaim: (() => void) | undefined;
+
+  constructor(private readonly deliveryJournal: MemoryJournal) {}
+
+  async getOrCreateCurrentAttempt(input: {
+    readonly idempotencyKey: string;
+    readonly providerName: string;
+  }): Promise<ProviderTransactionAttemptEntry> {
+    const items = this.attempts.get(input.idempotencyKey) ?? [];
+    const latest = items.at(-1);
+    if (latest !== undefined && latest.status !== "expired") return latest;
+    const attemptNumber = (latest?.attemptNumber ?? 0) + 1;
+    const created: ProviderTransactionAttemptEntry = {
+      id: `attempt-${attemptNumber}`,
+      providerDeliveryId: "memory-delivery",
+      attemptNumber,
+      attemptKey: `${input.idempotencyKey}:attempt:${attemptNumber}`,
+      txid: null,
+      expirationAt: null,
+      status: "created",
+      lastBroadcastResult: null,
+      lastChainStatus: null,
+      lastChainObservedAt: null,
+    };
+    this.attempts.set(input.idempotencyKey, [...items, created]);
+    return created;
+  }
+
+  async claimAttemptTransaction(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<ProviderTransactionAttemptEntry> {
+    const located = this.locate(input.attemptKey);
+    if (located.attempt.txid !== null) {
+      if (
+        located.attempt.txid !== input.txid ||
+        located.attempt.expirationAt?.getTime() !== input.expirationAt.getTime()
+      ) throw new Error("attempt identity changed");
+      return located.attempt;
+    }
+    if (located.attempt.status !== "created") throw new Error("attempt not created");
+    const updated: ProviderTransactionAttemptEntry = {
+      ...located.attempt,
+      txid: input.txid,
+      expirationAt: input.expirationAt,
+      status: "signed",
+    };
+    located.items[located.index] = updated;
+    this.deliveryJournal.projectProviderOrderId(located.idempotencyKey, input.txid);
+    this.onClaim?.();
+    return updated;
+  }
+
+  async recordAttemptState(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly status: ProviderTransactionAttemptStatus;
+    readonly lastBroadcastResult?: "accepted" | "rejected" | "unknown";
+    readonly lastChainStatus?: "absent" | "processing" | "completed" | "failed" | "unknown";
+    readonly lastChainObservedAt?: Date;
+  }): Promise<ProviderTransactionAttemptEntry> {
+    const located = this.locate(input.attemptKey);
+    const observedAt = input.lastChainObservedAt ?? located.attempt.lastChainObservedAt;
+    if (
+      input.status === "expired" &&
+      (
+        input.lastChainStatus !== "absent" ||
+        located.attempt.expirationAt === null ||
+        observedAt === null ||
+        observedAt.getTime() < located.attempt.expirationAt.getTime()
+      )
+    ) throw new Error("attempt cannot expire");
+    const updated: ProviderTransactionAttemptEntry = {
+      ...located.attempt,
+      status: input.status,
+      lastBroadcastResult: input.lastBroadcastResult ?? located.attempt.lastBroadcastResult,
+      lastChainStatus: input.lastChainStatus ?? located.attempt.lastChainStatus,
+      lastChainObservedAt: observedAt,
+    };
+    located.items[located.index] = updated;
+    return updated;
+  }
+
+  async listAttempts(input: {
+    readonly idempotencyKey: string;
+    readonly providerName: string;
+  }): Promise<readonly ProviderTransactionAttemptEntry[]> {
+    return this.attempts.get(input.idempotencyKey) ?? [];
+  }
+
+  private locate(attemptKey: string): {
+    idempotencyKey: string;
+    items: ProviderTransactionAttemptEntry[];
+    index: number;
+    attempt: ProviderTransactionAttemptEntry;
+  } {
+    for (const [idempotencyKey, items] of this.attempts) {
+      const index = items.findIndex((item) => item.attemptKey === attemptKey);
+      const attempt = items[index];
+      if (index >= 0 && attempt !== undefined) return { idempotencyKey, items, index, attempt };
+    }
+    throw new Error("attempt missing");
+  }
+}
 class FakeTransport implements TronDelegationTransport {
   snapshot: TronEnergyResourceSnapshot = {
     totalEnergyLimit: 180_000_000_000n,
     totalEnergyWeight: 50_000_000n,
   };
   maxDelegatable = 100_000_000n;
-  broadcastResult: "accepted" | "rejected" | "unknown" =
-    "accepted";
-  solidifiedStatus:
-    | "processing"
-    | "completed"
-    | "failed"
-    | "unknown" = "processing";
+  broadcastResult: "accepted" | "rejected" | "unknown" = "accepted";
+  solidifiedStatus: "processing" | "completed" | "failed" | "unknown" = "processing";
+  readonly observations = new Map<string, TronTransactionObservation>();
+  buildTxids: string[] = [TXID];
+  buildExpirationsMs: number[] = [Date.now() + 60_000];
   buildCalls = 0;
   broadcastCalls = 0;
   statusCalls = 0;
   lastBalanceSun: bigint | undefined;
   readonly events: string[] = [];
 
-  async getEnergyResourceSnapshot(): Promise<TronEnergyResourceSnapshot> {
-    return this.snapshot;
-  }
-
-  async getCanDelegatedEnergySun(): Promise<bigint> {
-    return this.maxDelegatable;
-  }
+  async getEnergyResourceSnapshot(): Promise<TronEnergyResourceSnapshot> { return this.snapshot; }
+  async getCanDelegatedEnergySun(): Promise<bigint> { return this.maxDelegatable; }
 
   async buildEnergyDelegation(input: {
     readonly ownerAddress: string;
     readonly recipientAddress: string;
     readonly balanceSun: bigint;
   }): Promise<TronUnsignedDelegation> {
+    const index = this.buildCalls;
     this.buildCalls += 1;
     this.lastBalanceSun = input.balanceSun;
     this.events.push("build");
-
+    const txid = this.buildTxids[index] ?? this.buildTxids.at(-1) ?? TXID;
+    const expiration = this.buildExpirationsMs[index] ?? this.buildExpirationsMs.at(-1) ?? Date.now() + 60_000;
     return {
-      txid: TXID,
+      txid,
       transaction: {
-        txID: TXID,
+        txID: txid,
+        raw_data: { expiration },
         owner_address: input.ownerAddress,
         receiver_address: input.recipientAddress,
       },
@@ -131,83 +247,71 @@ class FakeTransport implements TronDelegationTransport {
   ): Promise<"accepted" | "rejected" | "unknown"> {
     this.broadcastCalls += 1;
     this.events.push("broadcast");
-    expect(transaction.txID).toBe(TXID);
+    expect(typeof transaction.txID).toBe("string");
     return this.broadcastResult;
   }
 
-  async getSolidifiedTransactionStatus(): Promise<
-    "processing" | "completed" | "failed" | "unknown"
-  > {
+  async getTransactionObservation(input: {
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<TronTransactionObservation> {
     this.statusCalls += 1;
-    return this.solidifiedStatus;
+    return this.observations.get(input.txid) ?? { status: this.solidifiedStatus };
   }
 }
-
 class FakeSigner implements TronDelegationSigner {
   calls = 0;
   recoverCalls = 0;
-  txid = TXID;
+  txid: string | undefined;
   readonly events: string[] = [];
-  private readonly signedByKey = new Map<
-    string,
-    TronSignedDelegation
-  >();
+  readonly signedKeys: string[] = [];
+  private readonly signedByKey = new Map<string, TronSignedDelegation>();
 
   seed(
-    idempotencyKey: string,
+    key: string,
     txid = TXID,
+    expiration = Date.now() + 60_000,
   ): void {
-    this.signedByKey.set(idempotencyKey, {
+    const attemptKey = key.includes(":attempt:") ? key : `${key}:attempt:1`;
+    this.signedByKey.set(attemptKey, {
       txid,
       transaction: {
         txID: txid,
+        raw_data: { expiration },
         signature: ["test-signature"],
       },
     });
   }
 
   async sign(input: {
-    readonly idempotencyKey: string;
+    readonly attemptKey: string;
     readonly unsigned: TronUnsignedDelegation;
   }): Promise<TronSignedDelegation> {
     this.calls += 1;
     this.events.push("sign");
-
-    const existing = this.signedByKey.get(
-      input.idempotencyKey,
-    );
-
-    if (existing !== undefined) {
-      return existing;
-    }
-
+    this.signedKeys.push(input.attemptKey);
+    const existing = this.signedByKey.get(input.attemptKey);
+    if (existing !== undefined) return existing;
+    const txid = this.txid ?? input.unsigned.txid;
     const signed: TronSignedDelegation = {
-      txid: this.txid,
+      txid,
       transaction: {
         ...input.unsigned.transaction,
-        txID: this.txid,
+        txID: txid,
         signature: ["test-signature"],
       },
     };
-
-    this.signedByKey.set(
-      input.idempotencyKey,
-      signed,
-    );
-
+    this.signedByKey.set(input.attemptKey, signed);
     return signed;
   }
 
-  async findSignedByIdempotencyKey(
-    idempotencyKey: string,
+  async findSignedByAttemptKey(
+    attemptKey: string,
   ): Promise<TronSignedDelegation | undefined> {
     this.recoverCalls += 1;
-    return this.signedByKey.get(
-      idempotencyKey,
-    );
+    return this.signedByKey.get(attemptKey);
   }
 }
-
 function request(idempotencyKey: string) {
   return {
     idempotencyKey,
@@ -255,6 +359,7 @@ describe("TRON own-pool Energy provider", () => {
   it("fails preflight without signing or broadcasting when capacity is insufficient", async () => {
     const key = "energy-delivery:capacity";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
     transport.maxDelegatable = 1_000_000n;
@@ -264,6 +369,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     const result = await provider.createDelivery(
@@ -283,14 +389,12 @@ describe("TRON own-pool Energy provider", () => {
   it("persists the signed txid before broadcast", async () => {
     const key = "energy-delivery:ordered";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
 
-    const originalClaim =
-      journal.claimProviderOrderId.bind(journal);
-    journal.claimProviderOrderId = async (input) => {
+    attempts.onClaim = () => {
       transport.events.push("claim");
-      await originalClaim(input);
     };
 
     const provider = new TronOwnPoolEnergyProvider(
@@ -298,6 +402,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     const result = await provider.createDelivery(
@@ -320,6 +425,7 @@ describe("TRON own-pool Energy provider", () => {
   it("fails closed if the signer changes transaction identity", async () => {
     const key = "energy-delivery:signer-mismatch";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
     signer.txid = OTHER_TXID;
@@ -329,6 +435,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     await expect(
@@ -347,6 +454,7 @@ describe("TRON own-pool Energy provider", () => {
   it("recovers an ambiguous broadcast through the journaled txid", async () => {
     const key = "energy-delivery:ambiguous";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
     transport.broadcastResult = "unknown";
@@ -356,6 +464,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     const created = await provider.createDelivery(
@@ -387,6 +496,7 @@ describe("TRON own-pool Energy provider", () => {
   it("recovers the same signed transaction after a crash before journal claim", async () => {
     const key = "energy-delivery:crash-before-claim";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
     signer.seed(key);
@@ -396,6 +506,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     const result = await provider.createDelivery(
@@ -420,14 +531,19 @@ describe("TRON own-pool Energy provider", () => {
   it("rebroadcasts the exact signed transaction after a crash between txid claim and broadcast", async () => {
     const key = "energy-delivery:crash-before-broadcast";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
     signer.seed(key);
-
-    await journal.claimProviderOrderId({
+    const firstAttempt = await attempts.getOrCreateCurrentAttempt({
       idempotencyKey: key,
       providerName: "tron-own-pool",
-      providerOrderId: TXID,
+    });
+    await attempts.claimAttemptTransaction({
+      attemptKey: firstAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      txid: TXID,
+      expirationAt: new Date(Date.now() + 60_000),
     });
     transport.solidifiedStatus = "unknown";
 
@@ -436,6 +552,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     const result = await provider.createDelivery(
@@ -457,15 +574,20 @@ describe("TRON own-pool Energy provider", () => {
   it("fails closed if durable signer recovery disagrees with the journaled txid", async () => {
     const key = "energy-delivery:recovery-mismatch";
     const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
     const transport = new FakeTransport();
     const signer = new FakeSigner();
-    signer.seed(key, OTHER_TXID);
-
-    await journal.claimProviderOrderId({
+    const firstAttempt = await attempts.getOrCreateCurrentAttempt({
       idempotencyKey: key,
       providerName: "tron-own-pool",
-      providerOrderId: TXID,
     });
+    await attempts.claimAttemptTransaction({
+      attemptKey: firstAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      txid: TXID,
+      expirationAt: new Date(Date.now() + 60_000),
+    });
+    signer.seed(firstAttempt.attemptKey, OTHER_TXID);
     transport.solidifiedStatus = "unknown";
 
     const provider = new TronOwnPoolEnergyProvider(
@@ -473,6 +595,7 @@ describe("TRON own-pool Energy provider", () => {
       transport,
       signer,
       journal,
+      attempts,
     );
 
     await expect(
@@ -492,11 +615,13 @@ describe("TRON own-pool Energy provider", () => {
       key,
       "other-provider",
     );
+    const attempts = new MemoryAttemptJournal(journal);
     const provider = new TronOwnPoolEnergyProvider(
       OWNER,
       new FakeTransport(),
       new FakeSigner(),
       journal,
+      attempts,
     );
 
     await expect(
@@ -505,4 +630,56 @@ describe("TRON own-pool Energy provider", () => {
       "Energy provider journal owner changed",
     );
   });
+  it("creates a replacement attempt only after solidified absence reaches the original expiration", async () => {
+    const key = "energy-delivery:replacement";
+    const journal = new MemoryJournal(key);
+    const attempts = new MemoryAttemptJournal(journal);
+    const transport = new FakeTransport();
+    const signer = new FakeSigner();
+    transport.buildTxids = [TXID, OTHER_TXID];
+    transport.buildExpirationsMs = [1_000, 3_000];
+    transport.broadcastResult = "unknown";
+
+    const provider = new TronOwnPoolEnergyProvider(
+      OWNER, transport, signer, journal, attempts,
+    );
+
+    const first = await provider.createDelivery(request(key));
+    expect(first.status).toBe("processing");
+    expect(transport.buildCalls).toBe(1);
+    expect(signer.signedKeys).toEqual([`${key}:attempt:1`]);
+
+    transport.observations.set(TXID, {
+      status: "absent",
+      solidifiedObservedAt: new Date(2_000),
+    });
+    transport.broadcastResult = "accepted";
+
+    const replacement = await provider.createDelivery(request(key));
+    expect(replacement).toEqual({
+      providerOrderId: OTHER_TXID,
+      idempotencyKey: key,
+      status: "accepted",
+    });
+    expect(transport.buildCalls).toBe(2);
+    expect(signer.signedKeys).toEqual([
+      `${key}:attempt:1`,
+      `${key}:attempt:2`,
+    ]);
+
+    const history = await attempts.listAttempts({
+      idempotencyKey: key,
+      providerName: "tron-own-pool",
+    });
+    expect(history.map((attempt) => ({
+      attemptNumber: attempt.attemptNumber,
+      txid: attempt.txid,
+      status: attempt.status,
+    }))).toEqual([
+      { attemptNumber: 1, txid: TXID, status: "expired" },
+      { attemptNumber: 2, txid: OTHER_TXID, status: "accepted" },
+    ]);
+    expect((await journal.findByIdempotencyKey(key))?.providerOrderId).toBe(OTHER_TXID);
+  });
+
 });

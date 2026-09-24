@@ -6,40 +6,13 @@ import {
 } from "../../db/schema.js";
 import type { AppDatabase } from "./postgres.js";
 
-export type ProviderTransactionAttemptStatus =
-  | "created"
-  | "signed"
-  | "accepted"
-  | "processing"
-  | "completed"
-  | "failed"
-  | "expired"
-  | "unknown";
-
-export type ProviderBroadcastResult =
-  | "accepted"
-  | "rejected"
-  | "unknown";
-
-export type ProviderChainStatus =
-  | "absent"
-  | "processing"
-  | "completed"
-  | "failed"
-  | "unknown";
-
-export interface ProviderTransactionAttemptEntry {
-  readonly id: string;
-  readonly providerDeliveryId: string;
-  readonly attemptNumber: number;
-  readonly attemptKey: string;
-  readonly txid: string | null;
-  readonly expirationAt: Date | null;
-  readonly status: ProviderTransactionAttemptStatus;
-  readonly lastBroadcastResult: ProviderBroadcastResult | null;
-  readonly lastChainStatus: ProviderChainStatus | null;
-}
-
+import type {
+  EnergyProviderAttemptJournal,
+  ProviderBroadcastResult,
+  ProviderChainStatus,
+  ProviderTransactionAttemptEntry,
+  ProviderTransactionAttemptStatus,
+} from "../energy/tron-own-pool-energy-provider.js";
 type AttemptRow = typeof providerTransactionAttempts.$inferSelect;
 
 function parseAttemptStatus(value: string): ProviderTransactionAttemptStatus {
@@ -95,6 +68,7 @@ function toAttempt(row: AttemptRow): ProviderTransactionAttemptEntry {
     status: parseAttemptStatus(row.status),
     lastBroadcastResult: parseBroadcastResult(row.lastBroadcastResult),
     lastChainStatus: parseChainStatus(row.lastChainStatus),
+    lastChainObservedAt: row.lastChainObservedAt,
   };
 }
 
@@ -113,7 +87,7 @@ function transitionAllowed(
   if (current === next) return true;
   switch (current) {
     case "created":
-      return next === "signed";
+      return next === "signed" || next === "failed";
     case "signed":
       return ["accepted", "processing", "failed", "expired", "unknown"].includes(next);
     case "accepted":
@@ -129,7 +103,9 @@ function transitionAllowed(
   }
 }
 
-export class PostgresEnergyProviderAttemptJournal {
+export class PostgresEnergyProviderAttemptJournal
+  implements EnergyProviderAttemptJournal
+{
   constructor(private readonly db: AppDatabase) {}
 
   async getOrCreateCurrentAttempt(input: {
@@ -246,8 +222,16 @@ export class PostgresEnergyProviderAttemptJournal {
     readonly status: ProviderTransactionAttemptStatus;
     readonly lastBroadcastResult?: ProviderBroadcastResult;
     readonly lastChainStatus?: ProviderChainStatus;
+    readonly lastChainObservedAt?: Date;
   }): Promise<ProviderTransactionAttemptEntry> {
     if (input.status === "created" || input.status === "signed") throw new Error("Provider transaction attempt state must advance beyond signed");
+
+    if (
+      input.lastChainObservedAt !== undefined &&
+      Number.isNaN(input.lastChainObservedAt.getTime())
+    ) {
+      throw new Error("Provider chain observation time is invalid");
+    }
 
     return this.db.transaction(async (tx) => {
       await tx.execute(
@@ -271,14 +255,24 @@ export class PostgresEnergyProviderAttemptJournal {
       const current = parseAttemptStatus(selected.attempt.status);
       if (!transitionAllowed(current, input.status)) throw new Error(`Invalid provider transaction attempt transition: ${current} -> ${input.status}`);
 
+      const chainObservedAt =
+        input.lastChainObservedAt ??
+        selected.attempt.lastChainObservedAt;
+
       if (
         input.status === "expired" &&
         (
           input.lastChainStatus !== "absent" ||
           selected.attempt.expirationAt === null ||
-          selected.attempt.expirationAt.getTime() > Date.now()
+          chainObservedAt === null ||
+          chainObservedAt.getTime() <
+            selected.attempt.expirationAt.getTime()
         )
-      ) throw new Error("Provider transaction attempt cannot expire without confirmed chain absence after expiration");
+      ) {
+        throw new Error(
+          "Provider transaction attempt cannot expire without solidified chain absence at or after expiration",
+        );
+      }
 
       const [updated] = await tx
         .update(providerTransactionAttempts)
@@ -286,6 +280,7 @@ export class PostgresEnergyProviderAttemptJournal {
           status: input.status,
           lastBroadcastResult: input.lastBroadcastResult ?? selected.attempt.lastBroadcastResult,
           lastChainStatus: input.lastChainStatus ?? selected.attempt.lastChainStatus,
+          lastChainObservedAt: chainObservedAt,
           updatedAt: new Date(),
         })
         .where(eq(providerTransactionAttempts.id, selected.attempt.id))
