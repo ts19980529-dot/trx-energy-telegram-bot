@@ -121,6 +121,7 @@ export class HttpTronDelegationSigner implements TronDelegationSigner {
             accept: "application/json",
           },
           body: JSON.stringify(body),
+          redirect: "error",
           signal: AbortSignal.timeout(this.timeoutMs),
         },
       );

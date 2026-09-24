@@ -150,6 +150,21 @@ describe("parseRuntimeConfig", () => {
     });
   });
 
+  it("allows only Railway private signer addresses in production", () => {
+    expect(parseRuntimeConfig({ ...completeEnergyConfig, NODE_ENV: "production" }).tronEnergy?.signerBaseUrl)
+      .toBe("http://signer.railway.internal:8080");
+    for (const address of [
+      "https://signer.example.com",
+      "http://signer.railway.internal.evil.test:8080",
+      "http://signer.railway.internal",
+      "http://signer.railway.internal:8080/path",
+    ]) {
+      expect(() => parseRuntimeConfig({
+        ...completeEnergyConfig, NODE_ENV: "production", ENERGY_SIGNER_BASE_URL: address,
+      })).toThrow(/ENERGY_SIGNER_BASE_URL/);
+    }
+  });
+
   it("fails closed for partial Energy configuration", () => {
     expect(() =>
       parseRuntimeConfig({

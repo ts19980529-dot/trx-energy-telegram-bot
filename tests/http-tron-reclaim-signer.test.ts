@@ -47,6 +47,7 @@ describe("HttpTronReclaimSigner", () => {
     );
     const headers = new Headers(calls[0]?.[1]?.headers);
     expect(headers.get("authorization")).toBe("Bearer signer-token");
+    expect(calls[0]?.[1]?.redirect).toBe("error");
   });
 
   it("maps dedicated reclaim recovery 404 to undefined", async () => {

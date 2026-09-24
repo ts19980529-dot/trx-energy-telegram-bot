@@ -227,6 +227,22 @@ function parseTronEnergyConfig(
     throw new Error("Configured ENERGY_PROVIDER is not implemented");
   }
 
+  const signerBaseUrl = requiredValue(env, "ENERGY_SIGNER_BASE_URL");
+  if (env.NODE_ENV?.trim() === "production") {
+    let url: URL;
+    try {
+      url = new URL(signerBaseUrl);
+    } catch {
+      throw new Error("ENERGY_SIGNER_BASE_URL must be a Railway private service origin in production");
+    }
+    if (url.protocol !== "http:" ||
+      !/^[a-z0-9-]+\.railway\.internal$/.test(url.hostname) ||
+      url.port === "" || url.username !== "" || url.password !== "" ||
+      url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+      throw new Error("ENERGY_SIGNER_BASE_URL must be a Railway private service origin in production");
+    }
+  }
+
   return {
     providerName,
     ownerAddress: requiredValue(env, "ENERGY_OWNER_ADDRESS"),
@@ -242,7 +258,7 @@ function parseTronEnergyConfig(
       requiredValue(env, "ENERGY_TRON_HTTP_TIMEOUT_MS"),
       "ENERGY_TRON_HTTP_TIMEOUT_MS",
     ),
-    signerBaseUrl: requiredValue(env, "ENERGY_SIGNER_BASE_URL"),
+    signerBaseUrl,
     signerHttpTimeoutMs: parsePositiveSafeInteger(
       requiredValue(env, "ENERGY_SIGNER_HTTP_TIMEOUT_MS"),
       "ENERGY_SIGNER_HTTP_TIMEOUT_MS",

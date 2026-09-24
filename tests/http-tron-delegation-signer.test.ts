@@ -49,6 +49,7 @@ describe("HttpTronDelegationSigner", () => {
     const headers = new Headers(calls[0]?.[1]?.headers);
     expect(headers.get("authorization")).toBe("Bearer signer-token");
     expect(headers.get("content-type")).toBe("application/json");
+    expect(calls[0]?.[1]?.redirect).toBe("error");
   });
 
   it("maps signer recovery 404 to undefined", async () => {

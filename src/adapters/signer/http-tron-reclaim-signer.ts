@@ -108,6 +108,7 @@ export class HttpTronReclaimSigner implements TronReclaimSigner {
             accept: "application/json",
           },
           body: JSON.stringify(body),
+          redirect: "error",
           signal: AbortSignal.timeout(this.timeoutMs),
         },
       );
