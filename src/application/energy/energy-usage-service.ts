@@ -193,6 +193,10 @@ export class EnergyUsageService {
     this.providers = registered;
   }
 
+  canResumeDelivery(providerName: string | null): boolean {
+    return providerName === null || this.providers.has(providerName);
+  }
+
   async prepare(input: {
     readonly telegramUserId: bigint;
     readonly recipientAddress: string;
