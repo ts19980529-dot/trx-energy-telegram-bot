@@ -570,6 +570,57 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       { attemptNumber: 2, txid: secondTxid, status: "signed" },
     ]);
     expect(await new PostgresEnergyProviderJournal(resource.db).findByIdempotencyKey(delivery.idempotencyKey)).toMatchObject({ providerOrderId: secondTxid });
+
+    const acceptedAtFloor = Date.now();
+    await attempts.recordAttemptState({
+      attemptKey: secondAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      status: "accepted",
+      lastBroadcastResult: "accepted",
+    });
+    await attempts.recordAttemptState({
+      attemptKey: secondAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      status: "completed",
+      lastChainStatus: "completed",
+    });
+
+    const [reclaimTiming] = await resource.db
+      .select({
+        broadcastAcceptedAt: providerTransactionAttempts.broadcastAcceptedAt,
+        finalizedAt: providerTransactionAttempts.finalizedAt,
+        reclaimEligibleAt: providerTransactionAttempts.reclaimEligibleAt,
+      })
+      .from(providerTransactionAttempts)
+      .where(eq(providerTransactionAttempts.id, secondAttempt.id))
+      .limit(1);
+
+    expect(reclaimTiming?.broadcastAcceptedAt?.getTime()).toBeGreaterThanOrEqual(
+      acceptedAtFloor,
+    );
+    expect(reclaimTiming?.finalizedAt).not.toBeNull();
+    expect(reclaimTiming?.reclaimEligibleAt).not.toBeNull();
+
+    const broadcastAcceptedAt = reclaimTiming?.broadcastAcceptedAt;
+    const finalizedAt = reclaimTiming?.finalizedAt;
+    const reclaimEligibleAt = reclaimTiming?.reclaimEligibleAt;
+    if (
+      broadcastAcceptedAt === null ||
+      broadcastAcceptedAt === undefined ||
+      finalizedAt === null ||
+      finalizedAt === undefined ||
+      reclaimEligibleAt === null ||
+      reclaimEligibleAt === undefined
+    ) {
+      throw new Error("Expected complete reclaim timing");
+    }
+
+    expect(reclaimEligibleAt.getTime()).toBeGreaterThanOrEqual(
+      broadcastAcceptedAt.getTime() + 60 * 60 * 1000,
+    );
+    expect(reclaimEligibleAt.getTime()).toBeGreaterThanOrEqual(
+      finalizedAt.getTime(),
+    );
   });
 
 

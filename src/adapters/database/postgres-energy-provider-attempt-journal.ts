@@ -274,6 +274,26 @@ export class PostgresEnergyProviderAttemptJournal
         );
       }
 
+      const transitionAt = new Date();
+      const broadcastAcceptedAt =
+        selected.attempt.broadcastAcceptedAt ??
+        (input.lastBroadcastResult === "accepted" ? transitionAt : null);
+      const finalizedAt =
+        selected.attempt.finalizedAt ??
+        (input.status === "completed" ? transitionAt : null);
+      const reclaimEligibleAt =
+        selected.attempt.reclaimEligibleAt ??
+        (
+          input.status === "completed" && finalizedAt !== null
+            ? new Date(
+                Math.max(
+                  (broadcastAcceptedAt ?? finalizedAt).getTime() + 60 * 60 * 1000,
+                  finalizedAt.getTime(),
+                ),
+              )
+            : null
+        );
+
       const [updated] = await tx
         .update(providerTransactionAttempts)
         .set({
@@ -281,7 +301,10 @@ export class PostgresEnergyProviderAttemptJournal
           lastBroadcastResult: input.lastBroadcastResult ?? selected.attempt.lastBroadcastResult,
           lastChainStatus: input.lastChainStatus ?? selected.attempt.lastChainStatus,
           lastChainObservedAt: chainObservedAt,
-          updatedAt: new Date(),
+          broadcastAcceptedAt,
+          finalizedAt,
+          reclaimEligibleAt,
+          updatedAt: transitionAt,
         })
         .where(eq(providerTransactionAttempts.id, selected.attempt.id))
         .returning();

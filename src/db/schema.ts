@@ -556,6 +556,9 @@ export const providerTransactionAttempts = pgTable(
     attemptKey: text("attempt_key").notNull(),
     txid: text("txid"),
     expirationAt: timestamp("expiration_at", { withTimezone: true }),
+    broadcastAcceptedAt: timestamp("broadcast_accepted_at", { withTimezone: true }),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    reclaimEligibleAt: timestamp("reclaim_eligible_at", { withTimezone: true }),
     status: text("status").default("created").notNull(),
     lastBroadcastResult: text("last_broadcast_result"),
     lastChainStatus: text("last_chain_status"),
@@ -605,6 +608,25 @@ export const providerTransactionAttempts = pgTable(
     check(
       "provider_transaction_attempts_identity_check",
       sql`(${table.status} in ('created', 'failed') and ${table.txid} is null and ${table.expirationAt} is null) or (${table.status} <> 'created' and ${table.txid} is not null and ${table.expirationAt} is not null)`,
+    ),
+    check(
+      "provider_transaction_attempts_finalized_status_check",
+      sql`${table.finalizedAt} is null or ${table.status} = 'completed'`,
+    ),
+    check(
+      "provider_transaction_attempts_reclaim_timestamps_check",
+      sql`(
+        ${table.finalizedAt} is null
+        and ${table.reclaimEligibleAt} is null
+      ) or (
+        ${table.finalizedAt} is not null
+        and ${table.reclaimEligibleAt} is not null
+        and ${table.reclaimEligibleAt} >= ${table.finalizedAt}
+        and (
+          ${table.broadcastAcceptedAt} is null
+          or ${table.reclaimEligibleAt} >= ${table.broadcastAcceptedAt} + interval '1 hour'
+        )
+      )`,
     ),
     check(
       "provider_transaction_attempts_signer_state_check",
