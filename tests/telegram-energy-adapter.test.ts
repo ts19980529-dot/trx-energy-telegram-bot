@@ -216,7 +216,7 @@ describe("Telegram Energy adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
-  it("uses Telegram callback identity as the Energy idempotency key", async () => {
+  it("uses one Energy action identity across repeated button presses", async () => {
     const calls: string[] = [];
     const executeInputs: unknown[] = [];
     const orderId = "22222222-2222-4222-8222-222222222222";
@@ -277,12 +277,33 @@ describe("Telegram Energy adapter", () => {
       },
     });
 
+    await bot.handleUpdate({
+      update_id: 12,
+      callback_query: {
+        id: "energy-callback-2",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `energy:use:energy_65k:${recipient}`,
+        message: {
+          message_id: 11,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
     expect(executeInputs).toEqual([
       {
         telegramUserId: 42n,
         optionCode: "energy_65k",
         recipientAddress: recipient,
-        idempotencyKey: "telegram:energy:energy-callback-1",
+        idempotencyKey: "telegram:energy:42:42:11",
+      },
+      {
+        telegramUserId: 42n,
+        optionCode: "energy_65k",
+        recipientAddress: recipient,
+        idempotencyKey: "telegram:energy:42:42:11",
       },
     ]);
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
