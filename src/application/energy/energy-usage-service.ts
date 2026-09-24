@@ -72,6 +72,12 @@ export type EnergyReservationResult =
     };
 
 export interface EnergyUsageRepository {
+  listPending(limit: number): Promise<readonly {
+    telegramUserId: bigint;
+    optionCode: string;
+    recipientAddress: string;
+    idempotencyKey: string;
+  }[]>;
   prepare(telegramUserId: bigint): Promise<EnergyPreparationResult>;
 
   reserve(input: {
@@ -265,15 +271,15 @@ export class EnergyUsageService {
       }
 
       if (recovered === undefined) {
-        return resultFromOrder(
-          await this.repository.applyDelivery({
-            orderId: dispatch.order.id,
-            providerName: this.provider.name,
-            deliveryIdempotencyKey: delivery.idempotencyKey,
-            providerOrderId: delivery.providerOrderId,
-            status: "unknown",
-          }),
-        );
+        // Crash after durable reservation but before provider creation: resume
+        // with the same provider key. The provider contract forbids a second order.
+        const resumed = await this.provider.createDelivery({
+          idempotencyKey: delivery.idempotencyKey,
+          internalOrderId: dispatch.order.id,
+          recipientAddress: dispatch.order.recipientAddress,
+          energyAmount: dispatch.order.energyAmount,
+        });
+        return this.applyProviderResult(dispatch.order.id, delivery, resumed);
       }
 
       return this.applyProviderResult(dispatch.order.id, delivery, recovered);

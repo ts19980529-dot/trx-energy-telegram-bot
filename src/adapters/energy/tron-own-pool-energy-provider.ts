@@ -277,6 +277,8 @@ export interface ProviderReclaimAttemptEntry {
 }
 
 export interface EnergyReclaimAttemptJournal {
+  listDueSources(limit: number): Promise<readonly string[]>;
+  getSourceBinding(sourceId: string): Promise<TronDelegationBinding>;
   getOrCreateCurrentAttempt(input: {
     readonly sourceProviderTransactionAttemptId: string;
     readonly providerName: string;
@@ -286,6 +288,18 @@ export interface EnergyReclaimAttemptJournal {
     readonly sourceProviderTransactionAttemptId: string;
     readonly providerName: string;
   }): Promise<readonly ProviderReclaimAttemptEntry[]>;
+  claimTransaction(input: {
+    readonly attemptKey: string;
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<ProviderReclaimAttemptEntry>;
+  recordState(input: {
+    readonly attemptKey: string;
+    readonly status: ProviderReclaimAttemptStatus;
+    readonly lastBroadcastResult?: ProviderBroadcastResult;
+    readonly lastChainStatus?: ProviderChainStatus;
+    readonly lastChainObservedAt?: Date;
+  }): Promise<ProviderReclaimAttemptEntry>;
 }
 
 const TRON_HEX_ADDRESS_PATTERN = /^41[0-9a-fA-F]{40}$/;

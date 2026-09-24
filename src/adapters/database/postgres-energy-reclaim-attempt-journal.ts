@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
 
 import {
   providerDeliveries,
@@ -7,8 +7,11 @@ import {
 } from "../../db/schema.js";
 import type {
   EnergyReclaimAttemptJournal,
+  ProviderBroadcastResult,
+  ProviderChainStatus,
   ProviderReclaimAttemptEntry,
   ProviderReclaimAttemptStatus,
+  TronDelegationBinding,
 } from "../energy/tron-own-pool-energy-provider.js";
 import type { AppDatabase } from "./postgres.js";
 
@@ -82,6 +85,46 @@ export class PostgresEnergyReclaimAttemptJournal
     private readonly db: AppDatabase,
     private readonly now: () => number = Date.now,
   ) {}
+
+  async listDueSources(limit: number): Promise<readonly string[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Reclaim scan limit must be between 1 and 100");
+    }
+    const rows = await this.db
+      .select({ id: providerTransactionAttempts.id })
+      .from(providerTransactionAttempts)
+      .innerJoin(providerDeliveries, eq(providerDeliveries.id, providerTransactionAttempts.providerDeliveryId))
+      .where(and(
+        eq(providerDeliveries.providerName, "tron-own-pool"),
+        eq(providerTransactionAttempts.status, "completed"),
+        lte(providerTransactionAttempts.reclaimEligibleAt, new Date(this.now())),
+        sql`not exists (
+          select 1 from provider_reclaim_attempts r
+          where r.source_provider_transaction_attempt_id = ${providerTransactionAttempts.id}
+            and r.status in ('completed', 'failed')
+        )`,
+      ))
+      .orderBy(asc(providerTransactionAttempts.reclaimEligibleAt))
+      .limit(limit);
+    return rows.map((row) => row.id);
+  }
+
+  async getSourceBinding(sourceId: string): Promise<TronDelegationBinding> {
+    const [row] = await this.db.select().from(providerTransactionAttempts)
+      .where(eq(providerTransactionAttempts.id, sourceId)).limit(1);
+    if (
+      row?.status !== "completed" || row.finalizedAt === null ||
+      row.reclaimEligibleAt === null || row.reclaimEligibleAt.getTime() > this.now() ||
+      row.delegatedOwnerAddress === null || row.delegatedReceiverAddress === null ||
+      row.delegatedResource !== "ENERGY" || row.delegatedBalanceSun === null
+    ) throw new Error("Reclaim source is not eligible or bound");
+    return {
+      ownerAddress: row.delegatedOwnerAddress,
+      receiverAddress: row.delegatedReceiverAddress,
+      resource: "ENERGY",
+      balanceSun: row.delegatedBalanceSun,
+    };
+  }
 
   async getOrCreateCurrentAttempt(input: {
     readonly sourceProviderTransactionAttemptId: string;
@@ -183,5 +226,84 @@ export class PostgresEnergyReclaimAttemptJournal
       .orderBy(asc(providerReclaimAttempts.attemptNumber));
 
     return rows.map(toEntry);
+  }
+
+  async claimTransaction(input: {
+    readonly attemptKey: string;
+    readonly txid: string;
+    readonly expirationAt: Date;
+  }): Promise<ProviderReclaimAttemptEntry> {
+    if (!/^[0-9a-fA-F]{64}$/.test(input.txid) ||
+      Number.isNaN(input.expirationAt.getTime())) {
+      throw new Error("Invalid reclaim transaction identity");
+    }
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.select().from(providerReclaimAttempts)
+        .where(eq(providerReclaimAttempts.attemptKey, input.attemptKey))
+        .limit(1).for("update");
+      if (row === undefined) throw new Error("Reclaim attempt is missing");
+      const txid = input.txid.toLowerCase();
+      if (row.txid !== null) {
+        if (row.txid !== txid || row.expirationAt?.getTime() !== input.expirationAt.getTime()) {
+          throw new Error("Reclaim transaction identity changed");
+        }
+        return toEntry(row);
+      }
+      if (row.status !== "created" || row.signerUnsignedTxid !== txid ||
+        row.signedTransaction === null) {
+        throw new Error("Reclaim transaction has not been durably signed");
+      }
+      const [updated] = await tx.update(providerReclaimAttempts)
+        .set({ txid, expirationAt: input.expirationAt, status: "signed", updatedAt: new Date() })
+        .where(eq(providerReclaimAttempts.id, row.id)).returning();
+      if (updated === undefined) throw new Error("Reclaim transaction claim failed");
+      return toEntry(updated);
+    });
+  }
+
+  async recordState(input: {
+    readonly attemptKey: string;
+    readonly status: ProviderReclaimAttemptStatus;
+    readonly lastBroadcastResult?: ProviderBroadcastResult;
+    readonly lastChainStatus?: ProviderChainStatus;
+    readonly lastChainObservedAt?: Date;
+  }): Promise<ProviderReclaimAttemptEntry> {
+    if (input.status === "created" || input.status === "signed") {
+      throw new Error("Reclaim state cannot move backwards");
+    }
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.select().from(providerReclaimAttempts)
+        .where(eq(providerReclaimAttempts.attemptKey, input.attemptKey))
+        .limit(1).for("update");
+      if (row === undefined || row.txid === null || row.expirationAt === null) {
+        throw new Error("Reclaim attempt has no transaction identity");
+      }
+      if (["completed", "failed", "expired"].includes(row.status)) {
+        if (row.status !== input.status) throw new Error("Reclaim terminal state cannot change");
+        return toEntry(row);
+      }
+      const observedAt = input.lastChainObservedAt ?? row.lastChainObservedAt;
+      if (input.status === "expired" && (
+        input.lastChainStatus !== "absent" || observedAt === null ||
+        observedAt.getTime() < row.expirationAt.getTime()
+      )) throw new Error("Reclaim cannot expire without solidified absence after expiration");
+      if ((input.status === "completed" || input.status === "failed") &&
+        input.lastChainStatus !== input.status) {
+        throw new Error("Reclaim terminal outcome requires chain evidence");
+      }
+      const timestamp = new Date();
+      const [updated] = await tx.update(providerReclaimAttempts).set({
+        status: input.status,
+        lastBroadcastResult: input.lastBroadcastResult ?? row.lastBroadcastResult,
+        lastChainStatus: input.lastChainStatus ?? row.lastChainStatus,
+        lastChainObservedAt: observedAt,
+        broadcastAcceptedAt: row.broadcastAcceptedAt ??
+          (input.lastBroadcastResult === "accepted" ? timestamp : null),
+        finalizedAt: input.status === "completed" ? timestamp : row.finalizedAt,
+        updatedAt: timestamp,
+      }).where(eq(providerReclaimAttempts.id, row.id)).returning();
+      if (updated === undefined) throw new Error("Reclaim state update failed");
+      return toEntry(updated);
+    });
   }
 }

@@ -939,6 +939,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     if (completed.delegationBinding === null) throw new Error("Expected delegation binding");
 
     const beforeEligible = new PostgresEnergyReclaimAttemptJournal(resource.db, () => Date.now());
+    expect(await beforeEligible.listDueSources(50)).not.toContain(completed.id);
     await expect(
       beforeEligible.getOrCreateCurrentAttempt({
         sourceProviderTransactionAttemptId: completed.id,
@@ -950,6 +951,13 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       resource.db,
       () => Date.now() + 2 * 60 * 60 * 1000,
     );
+    expect(await future.listDueSources(50)).toContain(completed.id);
+    expect(await future.getSourceBinding(completed.id)).toMatchObject({
+      ownerAddress: SIGNER_OWNER,
+      receiverAddress: RECIPIENT,
+      resource: "ENERGY",
+      balanceSun: 1_000_000n,
+    });
     const reclaimAttempts = await Promise.all(
       Array.from({ length: 6 }, () =>
         future.getOrCreateCurrentAttempt({
@@ -1068,6 +1076,30 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     await expect(
       restarted.findSignedByAttemptKey(reclaimAttempt.attemptKey),
     ).resolves.toEqual(signed[0]);
+
+    const signedExpiration = (signed[0]?.transaction.raw_data as { expiration: number }).expiration;
+    const claimed = await reclaimJournal.claimTransaction({
+      attemptKey: reclaimAttempt.attemptKey,
+      txid: signed[0]!.txid,
+      expirationAt: new Date(signedExpiration),
+    });
+    expect(claimed.status).toBe("signed");
+    await expect(reclaimJournal.claimTransaction({
+      attemptKey: reclaimAttempt.attemptKey,
+      txid: "a".repeat(64),
+      expirationAt: new Date(signedExpiration),
+    })).rejects.toThrow("Reclaim transaction identity changed");
+    await reclaimJournal.recordState({
+      attemptKey: reclaimAttempt.attemptKey,
+      status: "accepted",
+      lastBroadcastResult: "accepted",
+    });
+    await reclaimJournal.recordState({
+      attemptKey: reclaimAttempt.attemptKey,
+      status: "completed",
+      lastChainStatus: "completed",
+    });
+    expect(await reclaimJournal.listDueSources(50)).not.toContain(completed.id);
 
     await expect(
       signer.sign({

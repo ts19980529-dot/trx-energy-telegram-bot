@@ -1,4 +1,5 @@
 import { EnergyUsageService } from "../application/energy/energy-usage-service.js";
+import { EnergyReclaimService } from "../application/energy/energy-reclaim-service.js";
 import { PurchaseOrderCreationService } from "../application/payments/purchase-order-service.js";
 import { PurchaseOrderStatusService } from "../application/payments/purchase-order-status-service.js";
 import { UsdtPaymentReconciliationService } from "../application/payments/usdt-payment-reconciliation-service.js";
@@ -6,6 +7,7 @@ import { AdminAccessService } from "../application/telegram/admin-access-service
 import { PackageSelectionService } from "../application/telegram/package-selection-service.js";
 import { TelegramStartService } from "../application/telegram/start-service.js";
 import { PostgresEnergyProviderAttemptJournal } from "../adapters/database/postgres-energy-provider-attempt-journal.js";
+import { PostgresEnergyReclaimAttemptJournal } from "../adapters/database/postgres-energy-reclaim-attempt-journal.js";
 import { PostgresEnergyProviderJournal } from "../adapters/database/postgres-energy-provider-journal.js";
 import { PostgresEnergyUsageRepository } from "../adapters/database/postgres-energy-usage-repository.js";
 import { PostgresPackageCreditRepository } from "../adapters/database/postgres-package-credit-repository.js";
@@ -24,6 +26,7 @@ import { createPostgresResource } from "../adapters/database/postgres.js";
 import { TronOwnPoolEnergyProvider } from "../adapters/energy/tron-own-pool-energy-provider.js";
 import { ConfiguredUsdtPurchaseQuoteProvider } from "../adapters/payments/configured-usdt-purchase-quote-provider.js";
 import { HttpTronDelegationSigner } from "../adapters/signer/http-tron-delegation-signer.js";
+import { HttpTronReclaimSigner } from "../adapters/signer/http-tron-reclaim-signer.js";
 import {
   createSecretProvider,
   loadRuntimeSecrets,
@@ -139,6 +142,7 @@ async function main(): Promise<void> {
 
     const addressCodec = new NodeTronAddressCodec();
     let energyUsage: EnergyUsageService | undefined;
+    let reclaimLoop: PaymentReconciliationLoop | undefined;
 
     if (config.tronEnergy !== undefined) {
       if (tronSignerAuthToken === undefined) {
@@ -169,10 +173,29 @@ async function main(): Promise<void> {
         new PostgresEnergyProviderAttemptJournal(postgres.db),
       );
 
+      const energyRepository = new PostgresEnergyUsageRepository(postgres.db);
       energyUsage = new EnergyUsageService(
-        new PostgresEnergyUsageRepository(postgres.db),
+        energyRepository,
         provider,
         addressCodec,
+      );
+      reclaimLoop = new PaymentReconciliationLoop(
+        new EnergyReclaimService(
+          new PostgresEnergyReclaimAttemptJournal(postgres.db),
+          new HttpTronReclaimSigner({
+            baseUrl: config.tronEnergy.signerBaseUrl,
+            authToken: tronSignerAuthToken,
+            timeoutMs: config.tronEnergy.signerHttpTimeoutMs,
+          }),
+          transport,
+          "tron-own-pool",
+          50,
+          energyRepository,
+          energyUsage,
+        ),
+        30_000,
+        () => true,
+        () => console.error("Energy reclaim scan unavailable"),
       );
     }
 
@@ -288,8 +311,9 @@ async function main(): Promise<void> {
     await assertLongPollingAvailable(bot);
 
     const reconciliationAbort = new AbortController();
-    const reconciliationTask =
-      reconciliationLoop?.run(reconciliationAbort.signal);
+    const backgroundTasks = [reconciliationLoop, reclaimLoop]
+      .filter((loop): loop is PaymentReconciliationLoop => loop !== undefined)
+      .map((loop) => loop.run(reconciliationAbort.signal));
 
     const stop = (): void => {
       reconciliationAbort.abort();
@@ -311,11 +335,7 @@ async function main(): Promise<void> {
         allowed_updates: [...telegramAllowedUpdates],
       });
 
-      if (reconciliationTask === undefined) {
-        await botTask;
-      } else {
-        await Promise.race([botTask, reconciliationTask]);
-      }
+      await Promise.race([botTask, ...backgroundTasks]);
     } finally {
       reconciliationAbort.abort();
 
@@ -323,9 +343,7 @@ async function main(): Promise<void> {
         bot.stop();
       }
 
-      if (reconciliationTask !== undefined) {
-        await Promise.allSettled([reconciliationTask]);
-      }
+      await Promise.allSettled(backgroundTasks);
 
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
