@@ -772,7 +772,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
         attemptKey: attempt.attemptKey,
         unsigned: differentUnsigned,
       }),
-    ).rejects.toThrow("Signer attempt identity changed");
+    ).rejects.toThrow("Signer bound delegation balance mismatch");
 
     await attempts.claimAttemptTransaction({
       attemptKey: attempt.attemptKey,
