@@ -1006,7 +1006,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     await attempts.claimAttemptTransaction({
       attemptKey: source.attemptKey,
       providerName: "tron-own-pool",
-      txid: "e".repeat(64),
+      txid: "7".repeat(64),
       expirationAt: new Date(Date.now() + 60_000),
     });
     await attempts.recordAttemptState({
