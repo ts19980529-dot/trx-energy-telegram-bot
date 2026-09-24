@@ -125,7 +125,7 @@ export function createTelegramBot(
     await ctx.reply("请发送需要接收能量的 TRON 地址。");
   });
 
-  bot.hears(/^(?:T\\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
+  bot.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
     if (ctx.from === undefined) {
       return;
     }
