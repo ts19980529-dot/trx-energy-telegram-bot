@@ -175,11 +175,23 @@ function providerResultStatus(
 }
 
 export class EnergyUsageService {
+  private readonly providers: ReadonlyMap<string, EnergyProvider>;
+
   constructor(
     private readonly repository: EnergyUsageRepository,
     private readonly provider: EnergyProvider,
     private readonly addressCodec: TronAddressCodec,
-  ) {}
+    historicalProviders: readonly EnergyProvider[] = [],
+  ) {
+    const registered = new Map<string, EnergyProvider>();
+    for (const entry of [provider, ...historicalProviders]) {
+      if (entry.name.trim().length === 0 || registered.has(entry.name)) {
+        throw new Error("Energy providers must have distinct non-empty names");
+      }
+      registered.set(entry.name, entry);
+    }
+    this.providers = registered;
+  }
 
   async prepare(input: {
     readonly telegramUserId: bigint;
@@ -244,9 +256,16 @@ export class EnergyUsageService {
       return resultFromOrder(reservation.order);
     }
 
+    const provider = reservation.order.delivery === null
+      ? this.provider
+      : this.providers.get(reservation.order.delivery.providerName);
+    if (provider === undefined) {
+      return resultFromOrder(reservation.order);
+    }
+
     const dispatch = await this.repository.startDispatch({
       orderId: reservation.order.id,
-      providerName: this.provider.name,
+      providerName: provider.name,
     });
 
     if (dispatch.order.status !== "dispatching") {
@@ -266,6 +285,7 @@ export class EnergyUsageService {
         recovered = await this.continueExistingDelivery(
           dispatch.order,
           delivery,
+          provider,
         );
       } catch {
         return resultFromOrder(dispatch.order);
@@ -274,22 +294,22 @@ export class EnergyUsageService {
       if (recovered === undefined) {
         // Crash after durable reservation but before provider creation: resume
         // with the same provider key. The provider contract forbids a second order.
-        const resumed = await this.provider.createDelivery({
+        const resumed = await provider.createDelivery({
           idempotencyKey: delivery.idempotencyKey,
           internalOrderId: dispatch.order.id,
           recipientAddress: dispatch.order.recipientAddress,
           energyAmount: dispatch.order.energyAmount,
         });
-        return this.applyProviderResult(dispatch.order.id, delivery, resumed);
+        return this.applyProviderResult(dispatch.order.id, delivery, resumed, provider);
       }
 
-      return this.applyProviderResult(dispatch.order.id, delivery, recovered);
+      return this.applyProviderResult(dispatch.order.id, delivery, recovered, provider);
     }
 
     let created: EnergyDeliveryResult;
 
     try {
-      created = await this.provider.createDelivery({
+      created = await provider.createDelivery({
         idempotencyKey: delivery.idempotencyKey,
         internalOrderId: dispatch.order.id,
         recipientAddress: dispatch.order.recipientAddress,
@@ -299,19 +319,19 @@ export class EnergyUsageService {
       let recovered: EnergyOrderStatus | undefined;
 
       try {
-        recovered = await this.recoverExistingDelivery(delivery);
+        recovered = await this.recoverExistingDelivery(delivery, provider);
       } catch {
         return resultFromOrder(dispatch.order);
       }
 
       if (recovered !== undefined) {
-        return this.applyProviderResult(dispatch.order.id, delivery, recovered);
+        return this.applyProviderResult(dispatch.order.id, delivery, recovered, provider);
       }
 
       return resultFromOrder(
         await this.repository.applyDelivery({
           orderId: dispatch.order.id,
-          providerName: this.provider.name,
+          providerName: provider.name,
           deliveryIdempotencyKey: delivery.idempotencyKey,
           providerOrderId: delivery.providerOrderId,
           status: "unknown",
@@ -319,7 +339,7 @@ export class EnergyUsageService {
       );
     }
 
-    return this.applyProviderResult(dispatch.order.id, delivery, created);
+    return this.applyProviderResult(dispatch.order.id, delivery, created, provider);
   }
 
   async getStatus(input: {
@@ -336,8 +356,9 @@ export class EnergyUsageService {
       return resultFromOrder(order);
     }
 
-    if (order.delivery.providerName !== this.provider.name) {
-      throw new Error("Energy provider changed for an existing order");
+    const provider = this.providers.get(order.delivery.providerName);
+    if (provider === undefined) {
+      return resultFromOrder(order);
     }
 
     let recovered: EnergyDeliveryResult | EnergyOrderStatus | undefined;
@@ -346,6 +367,7 @@ export class EnergyUsageService {
       recovered = await this.continueExistingDelivery(
         order,
         order.delivery,
+        provider,
       );
     } catch {
       return resultFromOrder(order);
@@ -355,32 +377,34 @@ export class EnergyUsageService {
       return resultFromOrder(order);
     }
 
-    return this.applyProviderResult(order.id, order.delivery, recovered);
+    return this.applyProviderResult(order.id, order.delivery, recovered, provider);
   }
 
   private async continueExistingDelivery(
     order: EnergyConsumptionSnapshot,
     delivery: EnergyDeliverySnapshot,
+    provider: EnergyProvider,
   ): Promise<EnergyDeliveryResult | EnergyOrderStatus | undefined> {
     try {
-      return await this.provider.createDelivery({
+      return await provider.createDelivery({
         idempotencyKey: delivery.idempotencyKey,
         internalOrderId: order.id,
         recipientAddress: order.recipientAddress,
         energyAmount: order.energyAmount,
       });
     } catch {
-      return this.recoverExistingDelivery(delivery);
+      return this.recoverExistingDelivery(delivery, provider);
     }
   }
   private async recoverExistingDelivery(
     delivery: EnergyDeliverySnapshot,
+    provider: EnergyProvider,
   ): Promise<EnergyOrderStatus | undefined> {
     if (delivery.providerOrderId !== null) {
-      return this.provider.getDeliveryStatus(delivery.providerOrderId);
+      return provider.getDeliveryStatus(delivery.providerOrderId);
     }
 
-    return this.provider.findDeliveryByIdempotencyKey(
+    return provider.findDeliveryByIdempotencyKey(
       delivery.idempotencyKey,
     );
   }
@@ -389,6 +413,7 @@ export class EnergyUsageService {
     orderId: string,
     delivery: EnergyDeliverySnapshot,
     result: EnergyDeliveryResult | EnergyOrderStatus,
+    provider: EnergyProvider,
   ): Promise<ExecuteEnergyUsageResult> {
     if (result.idempotencyKey !== delivery.idempotencyKey) {
       throw new Error("Energy provider returned mismatched idempotency key");
@@ -396,7 +421,7 @@ export class EnergyUsageService {
 
     const order = await this.repository.applyDelivery({
       orderId,
-      providerName: this.provider.name,
+      providerName: provider.name,
       deliveryIdempotencyKey: delivery.idempotencyKey,
       providerOrderId: result.providerOrderId,
       status: providerResultStatus(result),
