@@ -72,7 +72,7 @@ export type EnergyReservationResult =
     };
 
 export interface EnergyUsageRepository {
-  listPending(limit: number): Promise<readonly {
+  listPending(limit: number, afterKey?: string): Promise<readonly {
     telegramUserId: bigint;
     optionCode: string;
     recipientAddress: string;

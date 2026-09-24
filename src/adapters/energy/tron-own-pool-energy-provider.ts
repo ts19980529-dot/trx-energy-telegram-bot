@@ -277,7 +277,7 @@ export interface ProviderReclaimAttemptEntry {
 }
 
 export interface EnergyReclaimAttemptJournal {
-  listDueSources(limit: number): Promise<readonly string[]>;
+  listDueSources(limit: number, afterId?: string): Promise<readonly string[]>;
   getSourceBinding(sourceId: string): Promise<TronDelegationBinding>;
   getOrCreateCurrentAttempt(input: {
     readonly sourceProviderTransactionAttemptId: string;

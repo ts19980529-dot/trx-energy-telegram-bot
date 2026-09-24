@@ -70,6 +70,7 @@ function harness(initial: "created" | "signed") {
   };
   return {
     service: new EnergyReclaimService(journal, signer, transport),
+    journal, signer, transport,
     sign, broadcast, setObservation: (value: "unknown" | "completed") => { observation = value; },
     getStatus: () => row.status,
   };
@@ -99,5 +100,35 @@ describe("durable Energy reclaim execution", () => {
     await h.service.runOnce();
     expect(h.sign).not.toHaveBeenCalled();
     expect(h.broadcast).toHaveBeenCalledTimes(1);
+  });
+
+  it("visits later pending deliveries and reclaim sources even if the first batch keeps failing", async () => {
+    const h = harness("signed");
+    const pending = ["a", "b", "c"].map((idempotencyKey) => ({
+      telegramUserId: 1n, optionCode: "energy", recipientAddress: "recipient", idempotencyKey,
+    }));
+    const listPending = vi.fn(async (limit: number, afterKey?: string) =>
+      pending.filter((order) => afterKey === undefined || order.idempotencyKey > afterKey).slice(0, limit));
+    const execute = vi.fn(async (_order: (typeof pending)[number]) => { throw new Error("temporary outage"); });
+    const listDueSources = vi.fn(async (limit: number, afterId?: string) =>
+      ["a", "b", "c"].filter((id) => afterId === undefined || id > afterId).slice(0, limit));
+    const getOrCreateCurrentAttempt = vi.fn(async (_input: {
+      readonly sourceProviderTransactionAttemptId: string;
+      readonly providerName: string;
+    }) => { throw new Error("temporary outage"); });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const service = new EnergyReclaimService(
+        { ...h.journal, listDueSources, getOrCreateCurrentAttempt },
+        h.signer, h.transport, "tron-own-pool", 1,
+        { listPending }, { execute },
+      );
+      for (let i = 0; i < 4; i++) await service.runOnce();
+      expect(execute.mock.calls.map(([order]) => order.idempotencyKey)).toEqual(["a", "b", "c", "a"]);
+      expect(getOrCreateCurrentAttempt.mock.calls.map(([input]) => input.sourceProviderTransactionAttemptId))
+        .toEqual(["a", "b", "c", "a"]);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

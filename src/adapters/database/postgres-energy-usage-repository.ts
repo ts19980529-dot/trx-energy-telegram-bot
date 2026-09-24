@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import type {
   EnergyConsumptionSnapshot,
@@ -111,7 +111,7 @@ function reservationMatches(input: {
 export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
   constructor(private readonly db: AppDatabase) {}
 
-  async listPending(limit: number): Promise<readonly {
+  async listPending(limit: number, afterKey?: string): Promise<readonly {
     telegramUserId: bigint;
     optionCode: string;
     recipientAddress: string;
@@ -127,8 +127,11 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       idempotencyKey: energyConsumptionOrders.idempotencyKey,
     }).from(energyConsumptionOrders)
       .innerJoin(users, eq(users.id, energyConsumptionOrders.userId))
-      .where(inArray(energyConsumptionOrders.status, ["reserved", "dispatching"]))
-      .orderBy(asc(energyConsumptionOrders.updatedAt))
+      .where(and(
+        inArray(energyConsumptionOrders.status, ["reserved", "dispatching"]),
+        afterKey === undefined ? undefined : gt(energyConsumptionOrders.idempotencyKey, afterKey),
+      ))
+      .orderBy(asc(energyConsumptionOrders.idempotencyKey))
       .limit(limit);
     return rows;
   }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
 
 import {
   providerDeliveries,
@@ -86,7 +86,7 @@ export class PostgresEnergyReclaimAttemptJournal
     private readonly now: () => number = Date.now,
   ) {}
 
-  async listDueSources(limit: number): Promise<readonly string[]> {
+  async listDueSources(limit: number, afterId?: string): Promise<readonly string[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("Reclaim scan limit must be between 1 and 100");
     }
@@ -97,6 +97,7 @@ export class PostgresEnergyReclaimAttemptJournal
       .where(and(
         eq(providerDeliveries.providerName, "tron-own-pool"),
         eq(providerTransactionAttempts.status, "completed"),
+        afterId === undefined ? undefined : gt(providerTransactionAttempts.id, afterId),
         lte(providerTransactionAttempts.reclaimEligibleAt, new Date(this.now())),
         sql`not exists (
           select 1 from provider_reclaim_attempts r
@@ -104,7 +105,7 @@ export class PostgresEnergyReclaimAttemptJournal
             and r.status in ('completed', 'failed')
         )`,
       ))
-      .orderBy(asc(providerTransactionAttempts.reclaimEligibleAt))
+      .orderBy(asc(providerTransactionAttempts.id))
       .limit(limit);
     return rows.map((row) => row.id);
   }

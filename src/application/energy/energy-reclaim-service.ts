@@ -34,6 +34,9 @@ function validateSigned(signed: TronSignedReclaim, expected?: string): TronSigne
 
 /** Reconcile durable reclaim attempts. All ambiguous outcomes retain the same signed txID. */
 export class EnergyReclaimService {
+  private pendingCursor: string | undefined;
+  private reclaimCursor: string | undefined;
+
   constructor(
     private readonly journal: EnergyReclaimAttemptJournal,
     private readonly signer: TronReclaimSigner,
@@ -46,8 +49,13 @@ export class EnergyReclaimService {
 
   async runOnce(): Promise<void> {
     if (this.pendingOrders !== undefined && this.energyUsage !== undefined) {
-      const orders = await this.pendingOrders.listPending(this.maxSources);
+      let orders = await this.pendingOrders.listPending(this.maxSources, this.pendingCursor);
+      if (orders.length === 0 && this.pendingCursor !== undefined) {
+        this.pendingCursor = undefined;
+        orders = await this.pendingOrders.listPending(this.maxSources);
+      }
       for (const order of orders) {
+        this.pendingCursor = order.idempotencyKey;
         try {
           await this.energyUsage.execute(order);
         } catch (error) {
@@ -55,8 +63,13 @@ export class EnergyReclaimService {
         }
       }
     }
-    const sources = await this.journal.listDueSources(this.maxSources);
+    let sources = await this.journal.listDueSources(this.maxSources, this.reclaimCursor);
+    if (sources.length === 0 && this.reclaimCursor !== undefined) {
+      this.reclaimCursor = undefined;
+      sources = await this.journal.listDueSources(this.maxSources);
+    }
     for (const sourceId of sources) {
+      this.reclaimCursor = sourceId;
       try {
         await this.reconcile(sourceId);
       } catch (error) {
