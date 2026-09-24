@@ -250,7 +250,7 @@ export function formatPurchaseOrderStatus(
       : []),
     `可用笔数余额：${order.availableCount} 笔`,
     `更新时间：${formatUtcTimestamp(order.updatedAt)}`,
-  ].join("\\n");
+  ].join("\n");
 }
 
 export function purchaseOrderStatusIsTerminal(
