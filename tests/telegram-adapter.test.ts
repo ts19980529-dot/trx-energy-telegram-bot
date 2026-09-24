@@ -435,7 +435,7 @@ describe("Telegram adapter", () => {
       adminAccess: { async getRole() { return undefined; } },
       purchaseOrderCreation: {
         async create() {
-          throw new Error("BOT_TOKEN=never-show-this-value");
+          throw new Error("internal database detail");
         },
       },
     }, {
@@ -473,7 +473,7 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
     expect(sentBodies).toHaveLength(1);
     expect(sentBodies[0]).toContain("请先查询订单状态");
-    expect(sentBodies[0]).not.toContain("never-show-this-value");
+    expect(sentBodies[0]).not.toContain("internal database detail");
   });
 
   it("refreshes an owned purchase order status using numeric Telegram identity", async () => {
