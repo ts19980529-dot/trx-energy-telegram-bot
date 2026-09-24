@@ -158,6 +158,45 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
+  it("hides unavailable actions from /start and shows read-only package entry", async () => {
+    const bodies: string[] = [];
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: { async execute() { return { kind: "ready", packages: [{ id: packageId, code: "demo", count: 10, priceUsdtMicros: 17_000_000n }] }; } },
+      packageSelection: { async select() { return { kind: "unavailable" }; } },
+      adminAccess: { async getRole() { return undefined; } },
+    }, { botInfo: botInfo(), client: { fetch: async (input, init) => {
+      if (String(input).endsWith("/sendMessage")) bodies.push(String(init?.body ?? ""));
+      return mockFetch([])(input, init);
+    } } });
+    await bot.handleUpdate({ update_id: 101, message: {
+      message_id: 101, date: 1_700_000_000, chat: privateChat(), from: user(),
+      text: "/start", entities: [{ offset: 0, length: 6, type: "bot_command" }],
+    } });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("能量使用暂未开放");
+    expect(bodies[0]).toContain("查看笔数套餐");
+    expect(bodies[0]).not.toContain("使用能量");
+  });
+
+  it("rejects group callbacks before creating a purchase order", async () => {
+    const calls: string[] = [];
+    const purchaseInputs: unknown[] = [];
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: { async execute() { return { kind: "ready", packages: [] }; } },
+      packageSelection: { async select() { return { kind: "unavailable" }; } },
+      adminAccess: { async getRole() { return undefined; } },
+      purchaseOrderCreation: { async create(input) { purchaseInputs.push(input); throw new Error("must not create"); } },
+    }, { botInfo: botInfo(), client: { fetch: mockFetch(calls) } });
+    await bot.handleUpdate({ update_id: 102, callback_query: {
+      id: "group-payment", from: user(), chat_instance: "group-instance",
+      data: `package:pay:USDT:${packageId}`,
+      message: { message_id: 102, date: 1_700_000_000, chat: { id: -1001, type: "supergroup", title: "测试群" } },
+    } });
+    expect(purchaseInputs).toEqual([]);
+    expect(calls.filter((url) => url.endsWith("/answerCallbackQuery"))).toHaveLength(1);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+  });
+
   it("acknowledges the package menu while its database query is pending", async () => {
     const calls: string[] = [];
     let release!: () => void;
