@@ -205,6 +205,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     await resource.ping();
     await migrate(resource.db, { migrationsFolder: "./drizzle" });
     await resource.assertSchemaReady();
+    await resource.assertSignerSchemaReady();
     await bootstrapCatalogIfNeeded(resource.db);
 
     users = new PostgresTelegramUserRepository(resource.db);

@@ -30,6 +30,7 @@ async function main(): Promise<void> {
   try {
     await postgres.ping();
     await postgres.assertSchemaReady();
+    await postgres.assertSignerSchemaReady();
 
     const signer = new PostgresTronDelegationSigner(
       postgres.db,
