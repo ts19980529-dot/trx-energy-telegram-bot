@@ -239,6 +239,40 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     return user.id;
   }
 
+  it("scans reserved and dispatching orders with their persisted provider owner", async () => {
+    const telegramUserId = 9_200_000_000_020n;
+    await customer(telegramUserId, 1);
+    const key = "energy:test:pending-scan:1";
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: key,
+    });
+    expect(reservation.kind).toBe("ready");
+    if (reservation.kind !== "ready") {
+      throw new Error("Expected reserved Energy order");
+    }
+
+    const reserved = (await energy.listPending(100)).find(
+      (row) => row.idempotencyKey === key,
+    );
+    expect(reserved).toMatchObject({ telegramUserId, providerName: null });
+
+    await energy.startDispatch({
+      orderId: reservation.order.id,
+      providerName: "recorded-provider",
+    });
+
+    const dispatching = (await energy.listPending(100)).find(
+      (row) => row.idempotencyKey === key,
+    );
+    expect(dispatching).toMatchObject({
+      telegramUserId,
+      providerName: "recorded-provider",
+    });
+  });
+
   it("reserves one count, completes delivery, and consumes the reservation exactly once", async () => {
     const telegramUserId = 9_200_000_000_001n;
     const userId = await customer(telegramUserId, 2);
