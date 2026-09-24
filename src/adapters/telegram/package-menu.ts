@@ -147,16 +147,10 @@ export function buildOrderStatusKeyboard(
 export function buildPaymentMethodKeyboard(
   packageId: string,
 ): InlineKeyboard {
-  return new InlineKeyboard()
-    .text(
-      "USDT 支付",
-      packagePaymentCallbackData(packageId, "USDT"),
-    )
-    .row()
-    .text(
-      "TRX 支付（暂未启用）",
-      packagePaymentCallbackData(packageId, "TRX"),
-    );
+  return new InlineKeyboard().text(
+    "USDT 支付",
+    packagePaymentCallbackData(packageId, "USDT"),
+  );
 }
 
 function formatUtcTimestamp(value: Date | null): string {
