@@ -74,8 +74,28 @@ export function createTelegramBot(
   config?: BotConfig<Context>,
 ): Bot {
   const bot = new Bot(token, config);
+  const handlers = bot.errorBoundary(async (err) => {
+    if (err.error instanceof GrammyError || err.error instanceof HttpError) {
+      throw err.error;
+    }
 
-  bot.command("start", async (ctx) => {
+    const updateId = err.ctx.update.update_id;
+    console.error(`Telegram handler error; update_id=${updateId}`);
+
+    if (err.ctx.chat?.type !== "private") {
+      return;
+    }
+
+    try {
+      await err.ctx.reply(
+        "操作暂时无法完成。如已提交支付或能量操作，请先查询订单状态，避免重复操作。",
+      );
+    } catch {
+      console.error(`Telegram error feedback failed; update_id=${updateId}`);
+    }
+  });
+
+  handlers.command("start", async (ctx) => {
     if (ctx.from === undefined) {
       return;
     }
@@ -95,7 +115,7 @@ export function createTelegramBot(
     });
   });
 
-  bot.callbackQuery("menu:packages", async (ctx) => {
+  handlers.callbackQuery("menu:packages", async (ctx) => {
     if (!isPackageMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
@@ -122,7 +142,7 @@ export function createTelegramBot(
     });
   });
 
-  bot.callbackQuery("menu:energy", async (ctx) => {
+  handlers.callbackQuery("menu:energy", async (ctx) => {
     if (!isEnergyMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
@@ -190,7 +210,7 @@ export function createTelegramBot(
     }
   });
 
-  bot.callbackQuery(/^energy:use:/, async (ctx) => {
+  handlers.callbackQuery(/^energy:use:/, async (ctx) => {
     const selection = parseEnergyUseCallbackData(ctx.callbackQuery.data);
 
     if (selection === undefined) {
@@ -266,7 +286,7 @@ export function createTelegramBot(
     }
   });
 
-  bot.callbackQuery(/^energy:status:/, async (ctx) => {
+  handlers.callbackQuery(/^energy:status:/, async (ctx) => {
     const orderId = parseEnergyStatusCallbackData(ctx.callbackQuery.data);
 
     if (orderId === undefined) {
@@ -325,7 +345,7 @@ export function createTelegramBot(
     }
   });
 
-  bot.callbackQuery(/^package:view:/, async (ctx) => {
+  handlers.callbackQuery(/^package:view:/, async (ctx) => {
     const packageId = parsePackageCallbackData(ctx.callbackQuery.data);
 
     if (packageId === undefined) {
@@ -368,7 +388,7 @@ export function createTelegramBot(
     );
   });
 
-  bot.callbackQuery(/^package:pay:/, async (ctx) => {
+  handlers.callbackQuery(/^package:pay:/, async (ctx) => {
     const selection = parsePackagePaymentCallbackData(
       ctx.callbackQuery.data,
     );
@@ -447,7 +467,7 @@ export function createTelegramBot(
     }
   });
 
-  bot.callbackQuery(/^order:status:/, async (ctx) => {
+  handlers.callbackQuery(/^order:status:/, async (ctx) => {
     const orderId = parseOrderStatusCallbackData(
       ctx.callbackQuery.data,
     );
@@ -506,7 +526,7 @@ export function createTelegramBot(
     }
   });
 
-  bot.command("admin", async (ctx) => {
+  handlers.command("admin", async (ctx) => {
     if (ctx.from === undefined) {
       return;
     }

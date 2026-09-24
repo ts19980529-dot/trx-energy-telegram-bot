@@ -423,6 +423,59 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
+  it("gives a safe response when purchase processing fails after acknowledging a callback", async () => {
+    const calls: string[] = [];
+    const sentBodies: string[] = [];
+    const underlyingFetch = mockFetch(calls);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: { async execute() { return { kind: "blocked" }; } },
+      packageSelection: {
+        async select() { return { kind: "unavailable" }; },
+      },
+      adminAccess: { async getRole() { return undefined; } },
+      purchaseOrderCreation: {
+        async create() {
+          throw new Error("internal database detail");
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/sendMessage")) {
+            sentBodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 301,
+      callback_query: {
+        id: "callback-payment-failure",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}`,
+        message: {
+          message_id: 31,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0]).toContain("请先查询订单状态");
+    expect(sentBodies[0]).not.toContain("internal database detail");
+  });
+
   it("refreshes an owned purchase order status using numeric Telegram identity", async () => {
     const calls: string[] = [];
     const statusInputs: unknown[] = [];
