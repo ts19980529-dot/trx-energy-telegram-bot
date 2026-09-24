@@ -203,7 +203,7 @@ describe("NodeFetchTronDelegationTransport", () => {
       falseTransport.broadcastSignedTransaction(
         delegationTransaction(),
       ),
-    ).resolves.toEqual({ status: "unknown" });
+    ).resolves.toBe("unknown");
 
     const networkTransport = new NodeFetchTronDelegationTransport(
       baseConfig,
@@ -214,7 +214,7 @@ describe("NodeFetchTronDelegationTransport", () => {
       networkTransport.broadcastSignedTransaction(
         delegationTransaction(),
       ),
-    ).resolves.toEqual({ status: "unknown" });
+    ).resolves.toBe("unknown");
   });
 
   it("marks a solidified successful DelegateResource transaction completed", async () => {
