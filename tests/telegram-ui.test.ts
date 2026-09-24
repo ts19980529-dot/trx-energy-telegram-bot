@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   adminRoleLabel,
+  buildPaymentMethodKeyboard,
   formatPurchaseOrderInstructions,
   formatPurchaseOrderStatus,
   formatUsdtMicros,
@@ -47,6 +48,12 @@ describe("Telegram package UI", () => {
     expect(
       parsePackagePaymentCallbackData("package:pay:BTC:not-a-uuid"),
     ).toBeUndefined();
+  });
+
+  it("only offers supported payment buttons", () => {
+    const buttons = buildPaymentMethodKeyboard(id).inline_keyboard.flat();
+    expect(buttons.map((button) => button.text)).toEqual(["USDT 支付"]);
+    expect(buttons[0]?.callback_data).toBe(`package:pay:USDT:${id}`);
   });
 
   it("renders exact USDT payment instructions from the frozen order snapshot", () => {
