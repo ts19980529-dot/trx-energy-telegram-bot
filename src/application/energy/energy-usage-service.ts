@@ -77,6 +77,7 @@ export interface EnergyUsageRepository {
     optionCode: string;
     recipientAddress: string;
     idempotencyKey: string;
+    providerName: string | null;
   }[]>;
   prepare(telegramUserId: bigint): Promise<EnergyPreparationResult>;
 

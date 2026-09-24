@@ -116,6 +116,7 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
     optionCode: string;
     recipientAddress: string;
     idempotencyKey: string;
+    providerName: string | null;
   }[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("Energy pending scan limit must be between 1 and 100");
@@ -125,8 +126,10 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       optionCode: energyConsumptionOrders.optionCodeSnapshot,
       recipientAddress: energyConsumptionOrders.recipientAddress,
       idempotencyKey: energyConsumptionOrders.idempotencyKey,
+      providerName: providerDeliveries.providerName,
     }).from(energyConsumptionOrders)
       .innerJoin(users, eq(users.id, energyConsumptionOrders.userId))
+      .leftJoin(providerDeliveries, eq(providerDeliveries.energyConsumptionOrderId, energyConsumptionOrders.id))
       .where(and(
         inArray(energyConsumptionOrders.status, ["reserved", "dispatching"]),
         afterKey === undefined ? undefined : gt(energyConsumptionOrders.idempotencyKey, afterKey),
