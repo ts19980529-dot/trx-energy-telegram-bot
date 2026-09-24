@@ -145,8 +145,26 @@ class FakeTransport implements TronDelegationTransport {
 
 class FakeSigner implements TronDelegationSigner {
   calls = 0;
+  recoverCalls = 0;
   txid = TXID;
   readonly events: string[] = [];
+  private readonly signedByKey = new Map<
+    string,
+    TronSignedDelegation
+  >();
+
+  seed(
+    idempotencyKey: string,
+    txid = TXID,
+  ): void {
+    this.signedByKey.set(idempotencyKey, {
+      txid,
+      transaction: {
+        txID: txid,
+        signature: ["test-signature"],
+      },
+    });
+  }
 
   async sign(input: {
     readonly idempotencyKey: string;
@@ -155,7 +173,15 @@ class FakeSigner implements TronDelegationSigner {
     this.calls += 1;
     this.events.push("sign");
 
-    return {
+    const existing = this.signedByKey.get(
+      input.idempotencyKey,
+    );
+
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const signed: TronSignedDelegation = {
       txid: this.txid,
       transaction: {
         ...input.unsigned.transaction,
@@ -163,6 +189,22 @@ class FakeSigner implements TronDelegationSigner {
         signature: ["test-signature"],
       },
     };
+
+    this.signedByKey.set(
+      input.idempotencyKey,
+      signed,
+    );
+
+    return signed;
+  }
+
+  async findSignedByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<TronSignedDelegation | undefined> {
+    this.recoverCalls += 1;
+    return this.signedByKey.get(
+      idempotencyKey,
+    );
   }
 }
 
@@ -338,6 +380,110 @@ describe("TRON own-pool Energy provider", () => {
     });
     expect(transport.statusCalls).toBe(1);
     expect(transport.broadcastCalls).toBe(1);
+  });
+
+
+
+  it("recovers the same signed transaction after a crash before journal claim", async () => {
+    const key = "energy-delivery:crash-before-claim";
+    const journal = new MemoryJournal(key);
+    const transport = new FakeTransport();
+    const signer = new FakeSigner();
+    signer.seed(key);
+
+    const provider = new TronOwnPoolEnergyProvider(
+      OWNER,
+      transport,
+      signer,
+      journal,
+    );
+
+    const result = await provider.createDelivery(
+      request(key),
+    );
+
+    expect(result).toEqual({
+      providerOrderId: TXID,
+      idempotencyKey: key,
+      status: "accepted",
+    });
+    expect(transport.buildCalls).toBe(0);
+    expect(signer.calls).toBe(0);
+    expect(signer.recoverCalls).toBe(1);
+    expect(transport.broadcastCalls).toBe(1);
+    expect(
+      (await journal.findByIdempotencyKey(key))
+        ?.providerOrderId,
+    ).toBe(TXID);
+  });
+
+  it("rebroadcasts the exact signed transaction after a crash between txid claim and broadcast", async () => {
+    const key = "energy-delivery:crash-before-broadcast";
+    const journal = new MemoryJournal(key);
+    const transport = new FakeTransport();
+    const signer = new FakeSigner();
+    signer.seed(key);
+
+    await journal.claimProviderOrderId({
+      idempotencyKey: key,
+      providerName: "tron-own-pool",
+      providerOrderId: TXID,
+    });
+    transport.solidifiedStatus = "unknown";
+
+    const provider = new TronOwnPoolEnergyProvider(
+      OWNER,
+      transport,
+      signer,
+      journal,
+    );
+
+    const result = await provider.createDelivery(
+      request(key),
+    );
+
+    expect(result).toEqual({
+      providerOrderId: TXID,
+      idempotencyKey: key,
+      status: "accepted",
+    });
+    expect(transport.statusCalls).toBe(1);
+    expect(transport.buildCalls).toBe(0);
+    expect(signer.calls).toBe(0);
+    expect(signer.recoverCalls).toBe(1);
+    expect(transport.broadcastCalls).toBe(1);
+  });
+
+  it("fails closed if durable signer recovery disagrees with the journaled txid", async () => {
+    const key = "energy-delivery:recovery-mismatch";
+    const journal = new MemoryJournal(key);
+    const transport = new FakeTransport();
+    const signer = new FakeSigner();
+    signer.seed(key, OTHER_TXID);
+
+    await journal.claimProviderOrderId({
+      idempotencyKey: key,
+      providerName: "tron-own-pool",
+      providerOrderId: TXID,
+    });
+    transport.solidifiedStatus = "unknown";
+
+    const provider = new TronOwnPoolEnergyProvider(
+      OWNER,
+      transport,
+      signer,
+      journal,
+    );
+
+    await expect(
+      provider.createDelivery(request(key)),
+    ).rejects.toThrow(
+      "TRON signer changed transaction identity",
+    );
+
+    expect(transport.buildCalls).toBe(0);
+    expect(signer.calls).toBe(0);
+    expect(transport.broadcastCalls).toBe(0);
   });
 
   it("rejects a journal row owned by another provider", async () => {
