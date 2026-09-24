@@ -36,6 +36,18 @@ import {
   purchaseOrderStatusIsTerminal,
 } from "./package-menu.js";
 
+function callbackActionKey(
+  kind: "purchase" | "energy",
+  userId: number,
+  message: { message_id: number; chat: { id: number } } | undefined,
+): string | undefined {
+  if (message === undefined || message.message_id <= 0) {
+    return undefined;
+  }
+
+  return `telegram:${kind}:${userId}:${message.chat.id}:${message.message_id}`;
+}
+
 export const telegramAllowedUpdates = [
   "message",
   "callback_query",
@@ -197,13 +209,27 @@ export function createTelegramBot(
       return;
     }
 
+    const idempotencyKey = callbackActionKey(
+      "energy",
+      ctx.from.id,
+      ctx.callbackQuery.message,
+    );
+
+    if (idempotencyKey === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "操作消息已失效，请重新打开菜单。",
+        show_alert: true,
+      });
+      return;
+    }
+
     await ctx.answerCallbackQuery();
 
     const result = await services.energyUsage.execute({
       telegramUserId: BigInt(ctx.from.id),
       optionCode: selection.optionCode,
       recipientAddress: selection.recipientAddress,
-      idempotencyKey: `telegram:energy:${ctx.callbackQuery.id}`,
+      idempotencyKey,
     });
 
     switch (result.kind) {
@@ -355,6 +381,20 @@ export function createTelegramBot(
       return;
     }
 
+    const idempotencyKey = callbackActionKey(
+      "purchase",
+      ctx.from.id,
+      ctx.callbackQuery.message,
+    );
+
+    if (idempotencyKey === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "操作消息已失效，请重新打开菜单。",
+        show_alert: true,
+      });
+      return;
+    }
+
     await ctx.answerCallbackQuery();
 
     if (services.purchaseOrderCreation === undefined) {
@@ -366,7 +406,7 @@ export function createTelegramBot(
       telegramUserId: BigInt(ctx.from.id),
       packageId: selection.packageId,
       asset: selection.asset,
-      idempotencyKey: `telegram:purchase:${ctx.callbackQuery.id}`,
+      idempotencyKey,
       requestedAt: new Date(),
     });
 
