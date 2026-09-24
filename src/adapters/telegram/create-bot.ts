@@ -521,7 +521,7 @@ export function createTelegramBot(
     await ctx.reply(`当前权限：${adminRoleLabel(role)}`);
   });
 
-  bot.catch((err) => {
+  bot.catch(async (err) => {
     const updateId = err.ctx.update.update_id;
     const error = err.error;
 
@@ -538,6 +538,18 @@ export function createTelegramBot(
     }
 
     console.error(`Telegram handler error; update_id=${updateId}`);
+
+    if (err.ctx.chat?.type !== "private") {
+      return;
+    }
+
+    try {
+      await err.ctx.reply(
+        "操作暂时无法完成。如已提交支付或能量操作，请先查询订单状态，避免重复操作。",
+      );
+    } catch {
+      console.error(`Telegram error feedback failed; update_id=${updateId}`);
+    }
   });
 
   return bot;
