@@ -1,5 +1,3 @@
-import { GrammyError } from "grammy";
-
 import { EnergyUsageService } from "../application/energy/energy-usage-service.js";
 import { EnergyReclaimService } from "../application/energy/energy-reclaim-service.js";
 import { EnergyDeliveryRecoveryService } from "../application/energy/energy-delivery-recovery-service.js";
@@ -332,44 +330,41 @@ async function main(): Promise<void> {
     await assertLongPollingAvailable(bot);
 
     const reconciliationAbort = new AbortController();
-    let pollingLeaseLost = false;
+    const backgroundTasks = [reconciliationLoop, deliveryRecoveryLoop, reclaimLoop]
+      .filter((loop): loop is PaymentReconciliationLoop => loop !== undefined)
+      .map((loop) => loop.run(reconciliationAbort.signal));
+
     const stop = (): void => {
       reconciliationAbort.abort();
-      if (bot.isRunning()) bot.stop();
+
+      if (bot.isRunning()) {
+        bot.stop();
+      }
     };
 
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
-    let releasePollingLease: (() => void) | undefined;
-    let backgroundTasks: Promise<void>[] = [];
 
     try {
-      startupPhase = "telegram_polling_lease";
-      releasePollingLease = await postgres.acquireTelegramPollingLease(
-        reconciliationAbort.signal,
-        () => {
-          pollingLeaseLost = true;
-          stop();
-        },
+      console.info(
+        `Telegram bot initialized: @${bot.botInfo.username}`,
       );
-      if (releasePollingLease === undefined || reconciliationAbort.signal.aborted) return;
 
-      backgroundTasks = [reconciliationLoop, deliveryRecoveryLoop, reclaimLoop]
-        .filter((loop): loop is PaymentReconciliationLoop => loop !== undefined)
-        .map((loop) => loop.run(reconciliationAbort.signal));
-
-      console.info(`Telegram bot initialized: @${bot.botInfo.username}`);
       startupPhase = "telegram_long_polling";
       const botTask = bot.start({
         allowed_updates: [...telegramAllowedUpdates],
       });
 
       await Promise.race([botTask, ...backgroundTasks]);
-      if (pollingLeaseLost) throw new Error("Telegram polling lease lost");
     } finally {
-      stop();
+      reconciliationAbort.abort();
+
+      if (bot.isRunning()) {
+        bot.stop();
+      }
+
       await Promise.allSettled(backgroundTasks);
-      releasePollingLease?.();
+
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
     }
@@ -387,7 +382,7 @@ void main().catch((error: unknown) => {
       : undefined;
 
   console.error(
-    `Application startup failed: phase=${startupPhase}; name=${errorName}${error instanceof GrammyError && Number.isInteger(error.error_code) ? `; telegram_code=${error.error_code}` : ""}${safeMessage === undefined ? "" : `; reason=${safeMessage}`}`,
+    `Application startup failed: phase=${startupPhase}; name=${errorName}${safeMessage === undefined ? "" : `; reason=${safeMessage}`}`,
   );
   process.exitCode = 1;
 });
