@@ -165,7 +165,8 @@ describe("Telegram adapter", () => {
       packageSelection: { async select() { return { kind: "unavailable" }; } },
       adminAccess: { async getRole() { return undefined; } },
     }, { botInfo: botInfo(), client: { fetch: async (input, init) => {
-      if (String(input).endsWith("/sendMessage")) bodies.push(String(init?.body ?? ""));
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/sendMessage")) bodies.push(String(init?.body ?? ""));
       return mockFetch([])(input, init);
     } } });
     await bot.handleUpdate({ update_id: 101, message: {
