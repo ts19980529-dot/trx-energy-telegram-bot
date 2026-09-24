@@ -402,7 +402,13 @@ describe("Telegram adapter", () => {
     });
 
     expect(purchaseInputs).toHaveLength(2);
-    expect(purchaseInputs[1]).toMatchObject(purchaseInputs[0] as object);
+    expect(purchaseInputs[1]).toMatchObject({
+      telegramUserId: 42n,
+      packageId,
+      asset: "USDT",
+      idempotencyKey: "telegram:purchase:42:42:11",
+      requestedAt: expect.any(Date),
+    });
     expect(purchaseInputs[0]).toMatchObject({
       telegramUserId: 42n,
       packageId,
