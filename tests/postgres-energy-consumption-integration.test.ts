@@ -421,6 +421,8 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     }
 
     const withoutOriginal = new EnergyUsageService(energy, currentProvider, codec);
+    expect(withoutOriginal.canResumeDelivery("previous-provider")).toBe(false);
+    expect(withoutOriginal.canResumeDelivery(null)).toBe(true);
     expect((await withoutOriginal.getStatus({
       orderId: pending.order.id,
       telegramUserId,
@@ -436,6 +438,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     const switched = new EnergyUsageService(
       energy, currentProvider, codec, [previousProvider],
     );
+    expect(switched.canResumeDelivery("previous-provider")).toBe(true);
     expect((await switched.getStatus({
       orderId: pending.order.id,
       telegramUserId,

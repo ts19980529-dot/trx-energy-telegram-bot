@@ -44,7 +44,7 @@ export class EnergyReclaimService {
     private readonly providerName = "tron-own-pool",
     private readonly maxSources = 50,
     private readonly pendingOrders?: Pick<EnergyUsageRepository, "listPending">,
-    private readonly energyUsage?: Pick<EnergyUsageService, "execute">,
+    private readonly energyUsage?: Pick<EnergyUsageService, "execute" | "canResumeDelivery">,
   ) {}
 
   async runOnce(): Promise<void> {
@@ -57,7 +57,7 @@ export class EnergyReclaimService {
       for (const order of orders) {
         this.pendingCursor = order.idempotencyKey;
         // Dispatching orders remain bound to their original provider.
-        if (order.providerName !== null && order.providerName !== this.providerName) {
+        if (!this.energyUsage.canResumeDelivery(order.providerName)) {
           continue;
         }
         try {
