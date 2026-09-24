@@ -101,8 +101,12 @@ function logRetryablePaymentReadError(error: unknown): void {
   console.error("Payment reconciliation source unavailable");
 }
 
+let startupPhase = "bootstrap";
+
 async function main(): Promise<void> {
+  startupPhase = "parse_runtime_config";
   const config = parseRuntimeConfig(process.env);
+  startupPhase = "create_secret_provider";
   const secretProvider = createSecretProvider(
     config.secretProvider,
     process.env,
@@ -112,6 +116,7 @@ async function main(): Promise<void> {
     throw new Error("SecretProvider configuration mismatch");
   }
 
+  startupPhase = "load_runtime_secrets";
   const {
     botToken,
     databaseUrl,
@@ -124,10 +129,13 @@ async function main(): Promise<void> {
     energyEnabled: config.tronEnergy !== undefined,
   });
 
+  startupPhase = "create_postgres_resource";
   const postgres = createPostgresResource(databaseUrl);
 
   try {
+    startupPhase = "postgres_ping";
     await postgres.ping();
+    startupPhase = "postgres_schema_ready";
     await postgres.assertSchemaReady();
 
     const users = new PostgresTelegramUserRepository(postgres.db);
@@ -294,6 +302,7 @@ async function main(): Promise<void> {
             new PostgresPurchaseOrderStatusRepository(postgres.db),
           );
 
+    startupPhase = "create_telegram_bot";
     const bot = createTelegramBot(botToken, {
       start: startService,
       packageSelection,
@@ -307,7 +316,9 @@ async function main(): Promise<void> {
         : { purchaseOrderStatus }),
     });
 
+    startupPhase = "telegram_init";
     await bot.init();
+    startupPhase = "telegram_webhook_check";
     await assertLongPollingAvailable(bot);
 
     const reconciliationAbort = new AbortController();
@@ -331,6 +342,7 @@ async function main(): Promise<void> {
         `Telegram bot initialized: @${bot.botInfo.username}`,
       );
 
+      startupPhase = "telegram_long_polling";
       const botTask = bot.start({
         allowed_updates: [...telegramAllowedUpdates],
       });
@@ -355,6 +367,14 @@ async function main(): Promise<void> {
 
 void main().catch((error: unknown) => {
   const errorName = error instanceof Error ? error.name : "UnknownError";
-  console.error(`Application startup failed: ${errorName}`);
+  const safeMessage =
+    error instanceof Error &&
+    /^(?:[A-Z0-9_]+ is not configured|[A-Z0-9_]+ is required when SECRET_PROVIDER=infisical|Infisical (?:authentication|secret) request failed \(\d{3}\)|Infisical (?:authentication|secret) response is invalid|Database schema is not ready|Telegram webhook is configured; long polling startup refused|Configured SecretProvider is not implemented|SecretProvider configuration mismatch)$/.test(error.message)
+      ? error.message
+      : undefined;
+
+  console.error(
+    `Application startup failed: phase=${startupPhase}; name=${errorName}${safeMessage === undefined ? "" : `; reason=${safeMessage}`}`,
+  );
   process.exitCode = 1;
 });
