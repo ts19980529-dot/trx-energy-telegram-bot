@@ -1,5 +1,6 @@
 import { EnergyUsageService } from "../application/energy/energy-usage-service.js";
 import { EnergyReclaimService } from "../application/energy/energy-reclaim-service.js";
+import { EnergyDeliveryRecoveryService } from "../application/energy/energy-delivery-recovery-service.js";
 import { PurchaseOrderCreationService } from "../application/payments/purchase-order-service.js";
 import { PurchaseOrderStatusService } from "../application/payments/purchase-order-status-service.js";
 import { UsdtPaymentReconciliationService } from "../application/payments/usdt-payment-reconciliation-service.js";
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
     const addressCodec = new NodeTronAddressCodec();
     let energyUsage: EnergyUsageService | undefined;
     let reclaimLoop: PaymentReconciliationLoop | undefined;
+    const energyRepository = new PostgresEnergyUsageRepository(postgres.db);
 
     if (config.tronEnergy !== undefined) {
       if (tronSignerAuthToken === undefined) {
@@ -181,7 +183,6 @@ async function main(): Promise<void> {
         new PostgresEnergyProviderAttemptJournal(postgres.db),
       );
 
-      const energyRepository = new PostgresEnergyUsageRepository(postgres.db);
       energyUsage = new EnergyUsageService(
         energyRepository,
         provider,
@@ -198,14 +199,21 @@ async function main(): Promise<void> {
           transport,
           "tron-own-pool",
           50,
-          energyRepository,
-          energyUsage,
         ),
         30_000,
         () => true,
         () => console.error("Energy reclaim scan unavailable"),
       );
     }
+
+    const deliveryRecoveryLoop = energyUsage === undefined
+      ? undefined
+      : new PaymentReconciliationLoop(
+          new EnergyDeliveryRecoveryService(energyRepository, energyUsage),
+          30_000,
+          () => true,
+          () => console.error("Energy delivery scan unavailable"),
+        );
 
     let purchaseOrderCreation:
       | PurchaseOrderCreationService
@@ -322,7 +330,7 @@ async function main(): Promise<void> {
     await assertLongPollingAvailable(bot);
 
     const reconciliationAbort = new AbortController();
-    const backgroundTasks = [reconciliationLoop, reclaimLoop]
+    const backgroundTasks = [reconciliationLoop, deliveryRecoveryLoop, reclaimLoop]
       .filter((loop): loop is PaymentReconciliationLoop => loop !== undefined)
       .map((loop) => loop.run(reconciliationAbort.signal));
 

@@ -5,7 +5,6 @@ import type {
   TronReclaimTransport,
   TronSignedReclaim,
 } from "../../adapters/energy/tron-own-pool-energy-provider.js";
-import type { EnergyUsageRepository, EnergyUsageService } from "./energy-usage-service.js";
 
 function expirationOf(transaction: Record<string, unknown>): Date {
   const raw = transaction.raw_data;
@@ -34,7 +33,6 @@ function validateSigned(signed: TronSignedReclaim, expected?: string): TronSigne
 
 /** Reconcile durable reclaim attempts. All ambiguous outcomes retain the same signed txID. */
 export class EnergyReclaimService {
-  private pendingCursor: string | undefined;
   private reclaimCursor: string | undefined;
 
   constructor(
@@ -43,30 +41,9 @@ export class EnergyReclaimService {
     private readonly transport: TronReclaimTransport,
     private readonly providerName = "tron-own-pool",
     private readonly maxSources = 50,
-    private readonly pendingOrders?: Pick<EnergyUsageRepository, "listPending">,
-    private readonly energyUsage?: Pick<EnergyUsageService, "execute" | "canResumeDelivery">,
   ) {}
 
   async runOnce(): Promise<void> {
-    if (this.pendingOrders !== undefined && this.energyUsage !== undefined) {
-      let orders = await this.pendingOrders.listPending(this.maxSources, this.pendingCursor);
-      if (orders.length === 0 && this.pendingCursor !== undefined) {
-        this.pendingCursor = undefined;
-        orders = await this.pendingOrders.listPending(this.maxSources);
-      }
-      for (const order of orders) {
-        this.pendingCursor = order.idempotencyKey;
-        // Dispatching orders remain bound to their original provider.
-        if (!this.energyUsage.canResumeDelivery(order.providerName)) {
-          continue;
-        }
-        try {
-          await this.energyUsage.execute(order);
-        } catch (error) {
-          console.error(`Energy delivery reconciliation failed: type=${error instanceof Error ? error.name : "UnknownError"}`);
-        }
-      }
-    }
     let sources = await this.journal.listDueSources(this.maxSources, this.reclaimCursor);
     if (sources.length === 0 && this.reclaimCursor !== undefined) {
       this.reclaimCursor = undefined;
