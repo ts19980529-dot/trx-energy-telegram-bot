@@ -164,7 +164,7 @@ describe("Telegram adapter", () => {
       start: { async execute() { return { kind: "ready", packages: [{ id: packageId, code: "demo", count: 10, priceUsdtMicros: 17_000_000n }] }; } },
       packageSelection: { async select() { return { kind: "unavailable" }; } },
       adminAccess: { async getRole() { return undefined; } },
-    }, { botInfo: botInfo(), client: { fetch: async (input, init) => {
+    }, { botInfo: botInfo(), client: { fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.endsWith("/sendMessage")) bodies.push(String(init?.body ?? ""));
       return mockFetch([])(input, init);
