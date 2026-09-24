@@ -304,7 +304,7 @@ describe("Telegram adapter", () => {
     ).toBe(true);
   });
 
-  it("creates a USDT purchase order from the payment callback using callback identity for idempotency", async () => {
+  it("uses one purchase action identity across repeated button presses", async () => {
     const calls: string[] = [];
     const purchaseInputs: unknown[] = [];
 
@@ -336,7 +336,7 @@ describe("Telegram adapter", () => {
               userId: "33333333-3333-4333-8333-333333333333",
               packageId,
               idempotencyKey:
-                "telegram:purchase:callback-payment-1",
+                "telegram:purchase:42:42:11",
               status: "waiting_payment",
               payment: {
                 packageCodeSnapshot: "demo",
@@ -386,13 +386,29 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(purchaseInputs).toHaveLength(1);
+    await bot.handleUpdate({
+      update_id: 4,
+      callback_query: {
+        id: "callback-payment-2",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}`,
+        message: {
+          message_id: 11,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(purchaseInputs).toHaveLength(2);
+    expect(purchaseInputs[1]).toMatchObject(purchaseInputs[0] as object);
     expect(purchaseInputs[0]).toMatchObject({
       telegramUserId: 42n,
       packageId,
       asset: "USDT",
       idempotencyKey:
-        "telegram:purchase:callback-payment-1",
+        "telegram:purchase:42:42:11",
       requestedAt: expect.any(Date),
     });
     expect(
