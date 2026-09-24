@@ -140,7 +140,6 @@ function unsignedReclaim(
 }
 
 class FakeEnergyProvider implements EnergyProvider {
-  readonly name = "fake-energy";
   createCalls = 0;
   findCalls = 0;
   statusCalls = 0;
@@ -148,6 +147,7 @@ class FakeEnergyProvider implements EnergyProvider {
 
   constructor(
     private readonly mode: "completed" | "failed" | "ambiguous_processing",
+    readonly name = "fake-energy",
   ) {}
 
   async createDelivery(
@@ -398,6 +398,58 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     expect(refreshed.order.reservedCount).toBe(0);
     expect(provider.createCalls).toBe(2);
     expect(provider.statusCalls).toBe(1);
+  });
+
+  it("keeps historical deliveries on their original provider after the active provider changes", async () => {
+    const telegramUserId = 9_200_000_000_021n;
+    await customer(telegramUserId, 2);
+    const previousProvider = new FakeEnergyProvider("ambiguous_processing", "previous-provider");
+    const currentProvider = new FakeEnergyProvider("completed", "current-provider");
+    const codec = new NodeTronAddressCodec();
+    const original = new EnergyUsageService(energy, previousProvider, codec);
+    const historicalKey = "energy:test:provider-switch:old";
+
+    const pending = await original.execute({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: historicalKey,
+    });
+    expect(pending.kind).toBe("processing");
+    if (pending.kind !== "processing") {
+      throw new Error("Expected pending historical Energy order");
+    }
+
+    const withoutOriginal = new EnergyUsageService(energy, currentProvider, codec);
+    expect((await withoutOriginal.getStatus({
+      orderId: pending.order.id,
+      telegramUserId,
+    })).kind).toBe("processing");
+    expect((await withoutOriginal.execute({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: historicalKey,
+    })).kind).toBe("processing");
+    expect(currentProvider.createCalls).toBe(0);
+
+    const switched = new EnergyUsageService(
+      energy, currentProvider, codec, [previousProvider],
+    );
+    expect((await switched.getStatus({
+      orderId: pending.order.id,
+      telegramUserId,
+    })).kind).toBe("completed");
+    expect(previousProvider.createCalls).toBe(2);
+    expect(currentProvider.createCalls).toBe(0);
+
+    expect((await switched.execute({
+      telegramUserId,
+      optionCode: "energy_131k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:provider-switch:new",
+    })).kind).toBe("completed");
+    expect(currentProvider.createCalls).toBe(1);
   });
 
   it("serializes concurrent replays of the same idempotency key to one reservation and one provider create", async () => {
