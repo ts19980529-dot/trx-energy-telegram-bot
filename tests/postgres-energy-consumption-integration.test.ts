@@ -455,7 +455,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     expect(currentProvider.createCalls).toBe(1);
   });
 
-  it("serializes concurrent replays of the same idempotency key to one reservation and one provider create", async () => {
+  it("serializes concurrent replays and status reads while a provider call is in flight", async () => {
     const telegramUserId = 9_200_000_000_004n;
     await customer(telegramUserId, 2);
     const provider = new FakeEnergyProvider("completed");
@@ -464,18 +464,36 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       provider,
       new NodeTronAddressCodec(),
     );
+    const input = {
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:concurrent:1",
+    };
+    const originalCreate = provider.createDelivery.bind(provider);
+    let notifyStarted!: () => void;
+    let unblock!: () => void;
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    let entered = 0;
+    provider.createDelivery = async (request) => {
+      entered += 1;
+      notifyStarted();
+      await blocked;
+      return originalCreate(request);
+    };
 
-    const results = await Promise.all(
-      Array.from({ length: 6 }, () =>
-        service.execute({
-          telegramUserId,
-          optionCode: "energy_65k",
-          recipientAddress: RECIPIENT,
-          idempotencyKey: "energy:test:concurrent:1",
-        }),
-      ),
-    );
-
+    const first = service.execute(input);
+    await started;
+    const replays = Array.from({ length: 5 }, () => service.execute(input));
+    const reservation = await energy.reserve(input);
+    if (reservation.kind !== "ready") throw new Error("Expected reserved Energy order");
+    const status = service.getStatus({ orderId: reservation.order.id, telegramUserId });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const concurrentCalls = entered;
+    unblock();
+    const results = await Promise.all([first, ...replays, status]);
+    expect(concurrentCalls).toBe(1);
     expect(results.every((result) => result.kind === "completed")).toBe(true);
     expect(provider.createCalls).toBe(1);
 
