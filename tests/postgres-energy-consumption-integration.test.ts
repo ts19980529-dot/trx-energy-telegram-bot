@@ -456,12 +456,14 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       providerName: "tron-own-pool",
     })));
     expect(new Set(initial.map((attempt) => attempt.id)).size).toBe(1);
-    expect(initial[0]).toMatchObject({ attemptNumber: 1, attemptKey: `${delivery.idempotencyKey}:attempt:1`, txid: null, status: "created" });
+    const firstAttempt = initial[0];
+    if (firstAttempt === undefined) throw new Error("Expected initial provider transaction attempt");
+    expect(firstAttempt).toMatchObject({ attemptNumber: 1, attemptKey: `${delivery.idempotencyKey}:attempt:1`, txid: null, status: "created" });
 
     const firstTxid = "c".repeat(64);
     const firstExpiration = new Date(Date.now() - 5_000);
     const firstSigned = await attempts.claimAttemptTransaction({
-      attemptKey: initial[0].attemptKey,
+      attemptKey: firstAttempt.attemptKey,
       providerName: "tron-own-pool",
       txid: firstTxid,
       expirationAt: firstExpiration,
@@ -492,10 +494,12 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       providerName: "tron-own-pool",
     })));
     expect(new Set(replacement.map((attempt) => attempt.id)).size).toBe(1);
-    expect(replacement[0]).toMatchObject({ attemptNumber: 2, attemptKey: `${delivery.idempotencyKey}:attempt:2`, txid: null, status: "created" });
+    const secondAttempt = replacement[0];
+    if (secondAttempt === undefined) throw new Error("Expected replacement provider transaction attempt");
+    expect(secondAttempt).toMatchObject({ attemptNumber: 2, attemptKey: `${delivery.idempotencyKey}:attempt:2`, txid: null, status: "created" });
     const secondTxid = "e".repeat(64);
     await attempts.claimAttemptTransaction({
-      attemptKey: replacement[0].attemptKey,
+      attemptKey: secondAttempt.attemptKey,
       providerName: "tron-own-pool",
       txid: secondTxid,
       expirationAt: new Date(Date.now() + 60_000),
