@@ -8,13 +8,13 @@ export interface EnergyDeliveryRequest {
 }
 
 export interface EnergyDeliveryResult {
-  readonly providerOrderId: string;
+  readonly providerOrderId: string | null;
   readonly idempotencyKey: string;
   readonly status: "accepted" | "processing" | "completed" | "failed";
 }
 
 export interface EnergyOrderStatus {
-  readonly providerOrderId: string;
+  readonly providerOrderId: string | null;
   readonly idempotencyKey: string;
   readonly status: "processing" | "completed" | "failed" | "unknown";
 }
