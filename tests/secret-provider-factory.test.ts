@@ -165,6 +165,31 @@ describe("loadRuntimeSecrets", () => {
     ).rejects.toThrow(/TRON_SIGNER_AUTH_TOKEN/);
   });
 
+  it("accepts the signer transport token from the bot deployment without requesting it from Infisical", async () => {
+    const names: string[] = [];
+    const provider = {
+      name: "infisical",
+      async getSecret(name: string) {
+        names.push(name);
+        if (name === "BOT_TOKEN") return "bot-token";
+        if (name === "TRON_API_KEY") return "tron-api-key";
+        return undefined;
+      },
+    };
+    const result = await loadRuntimeSecrets(provider, {
+      env: {
+        DATABASE_URL: "postgresql://example.invalid/db",
+        TRON_SIGNER_AUTH_TOKEN: "railway-auth-token",
+      },
+      nodeEnv: "production",
+      usdtEnabled: true,
+      energyEnabled: true,
+    });
+    expect(result.tronSignerAuthToken).toBe("railway-auth-token");
+    expect(names).not.toContain("TRON_SIGNER_AUTH_TOKEN");
+    expect(names).not.toContain("TRON_SIGNER_PRIVATE_KEY");
+  });
+
   it("loads only signer secrets for the independent signer runtime", async () => {
     const provider = createSecretProvider("environment", {
       TRON_SIGNER_PRIVATE_KEY: "private-key",
