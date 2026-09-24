@@ -441,7 +441,7 @@ describe("Telegram adapter", () => {
     }, {
       botInfo: botInfo(),
       client: {
-        fetch: async (input, init) => {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
           const url = typeof input === "string"
             ? input
             : input instanceof URL
