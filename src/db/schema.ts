@@ -559,6 +559,10 @@ export const providerTransactionAttempts = pgTable(
     broadcastAcceptedAt: timestamp("broadcast_accepted_at", { withTimezone: true }),
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     reclaimEligibleAt: timestamp("reclaim_eligible_at", { withTimezone: true }),
+    delegatedOwnerAddress: text("delegated_owner_address"),
+    delegatedReceiverAddress: text("delegated_receiver_address"),
+    delegatedResource: text("delegated_resource"),
+    delegatedBalanceSun: bigint("delegated_balance_sun", { mode: "bigint" }),
     status: text("status").default("created").notNull(),
     lastBroadcastResult: text("last_broadcast_result"),
     lastChainStatus: text("last_chain_status"),
@@ -629,7 +633,98 @@ export const providerTransactionAttempts = pgTable(
       )`,
     ),
     check(
+      "provider_transaction_attempts_delegation_binding_check",
+      sql`(
+        ${table.delegatedOwnerAddress} is null
+        and ${table.delegatedReceiverAddress} is null
+        and ${table.delegatedResource} is null
+        and ${table.delegatedBalanceSun} is null
+      ) or (
+        ${table.delegatedOwnerAddress} is not null
+        and ${table.delegatedReceiverAddress} is not null
+        and ${table.delegatedResource} = 'ENERGY'
+        and ${table.delegatedBalanceSun} is not null
+        and ${table.delegatedBalanceSun} >= 1000000
+      )`,
+    ),
+    check(
       "provider_transaction_attempts_signer_state_check",
+      sql`(
+        ${table.signerUnsignedTxid} is null
+        and ${table.signerUnsignedDigest} is null
+        and ${table.signedTransaction} is null
+        and ${table.signedAt} is null
+      ) or (
+        ${table.signerUnsignedTxid} is not null
+        and ${table.signerUnsignedDigest} is not null
+        and ${table.signedTransaction} is not null
+        and ${table.signedAt} is not null
+      )`,
+    ),
+  ],
+);
+
+
+export const providerReclaimAttempts = pgTable(
+  "provider_reclaim_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceProviderTransactionAttemptId: uuid("source_provider_transaction_attempt_id")
+      .notNull()
+      .references(() => providerTransactionAttempts.id, { onDelete: "restrict" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    attemptKey: text("attempt_key").notNull(),
+    txid: text("txid"),
+    expirationAt: timestamp("expiration_at", { withTimezone: true }),
+    broadcastAcceptedAt: timestamp("broadcast_accepted_at", { withTimezone: true }),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    status: text("status").default("created").notNull(),
+    lastBroadcastResult: text("last_broadcast_result"),
+    lastChainStatus: text("last_chain_status"),
+    lastChainObservedAt: timestamp("last_chain_observed_at", { withTimezone: true }),
+    signerUnsignedTxid: text("signer_unsigned_txid"),
+    signerUnsignedDigest: text("signer_unsigned_digest"),
+    signedTransaction: jsonb("signed_transaction").$type<Record<string, unknown>>(),
+    signedAt: timestamp("signed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("provider_reclaim_attempts_source_number_unique").on(
+      table.sourceProviderTransactionAttemptId,
+      table.attemptNumber,
+    ),
+    unique("provider_reclaim_attempts_attempt_key_unique").on(table.attemptKey),
+    uniqueIndex("provider_reclaim_attempts_txid_unique").on(table.txid),
+    uniqueIndex("provider_reclaim_attempts_signer_unsigned_txid_unique")
+      .on(table.signerUnsignedTxid)
+      .where(sql`${table.signerUnsignedTxid} is not null`),
+    uniqueIndex("provider_reclaim_attempts_active_source_unique")
+      .on(table.sourceProviderTransactionAttemptId)
+      .where(sql`${table.status} in ('created', 'signed', 'accepted', 'processing', 'unknown')`),
+    check("provider_reclaim_attempts_number_positive", sql`${table.attemptNumber} > 0`),
+    check(
+      "provider_reclaim_attempts_status_check",
+      sql`${table.status} in ('created', 'signed', 'accepted', 'processing', 'completed', 'failed', 'expired', 'unknown')`,
+    ),
+    check(
+      "provider_reclaim_attempts_broadcast_check",
+      sql`${table.lastBroadcastResult} is null or ${table.lastBroadcastResult} in ('accepted', 'rejected', 'unknown')`,
+    ),
+    check(
+      "provider_reclaim_attempts_chain_check",
+      sql`${table.lastChainStatus} is null or ${table.lastChainStatus} in ('absent', 'processing', 'completed', 'failed', 'unknown')`,
+    ),
+    check(
+      "provider_reclaim_attempts_identity_check",
+      sql`(${table.status} in ('created', 'failed') and ${table.txid} is null and ${table.expirationAt} is null) or (${table.status} <> 'created' and ${table.txid} is not null and ${table.expirationAt} is not null)`,
+    ),
+    check(
+      "provider_reclaim_attempts_finalized_status_check",
+      sql`${table.finalizedAt} is null or ${table.status} = 'completed'`,
+    ),
+    check(
+      "provider_reclaim_attempts_signer_state_check",
       sql`(
         ${table.signerUnsignedTxid} is null
         and ${table.signerUnsignedDigest} is null

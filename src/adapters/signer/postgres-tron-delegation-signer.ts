@@ -108,6 +108,9 @@ function cloneTransaction(
 interface ValidatedUnsigned {
   readonly txid: string;
   readonly digest: string;
+  readonly ownerAddressHex: string;
+  readonly receiverAddressHex: string;
+  readonly balanceSun: bigint;
 }
 
 function validateUnsignedDelegation(
@@ -187,7 +190,7 @@ function validateUnsignedDelegation(
     throw new Error("Signer owner address mismatch");
   }
 
-  canonicalAddress(
+  const receiverAddress = canonicalAddress(
     requireString(value.receiver_address, "DelegateResource receiver_address"),
     "DelegateResource receiver_address",
   );
@@ -211,6 +214,9 @@ function validateUnsignedDelegation(
   return {
     txid,
     digest: transactionDigest(transaction),
+    ownerAddressHex: ownerAddress,
+    receiverAddressHex: receiverAddress,
+    balanceSun: BigInt(balance),
   };
 }
 
@@ -317,6 +323,26 @@ export class PostgresTronDelegationSigner implements TronDelegationSigner {
       }
       if (selected.providerName !== "tron-own-pool") {
         throw new Error("Signer attempt provider is not allowed");
+      }
+      if (
+        selected.attempt.delegatedOwnerAddress === null ||
+        selected.attempt.delegatedReceiverAddress === null ||
+        selected.attempt.delegatedResource === null ||
+        selected.attempt.delegatedBalanceSun === null
+      ) {
+        throw new Error("Signer attempt delegation binding is missing");
+      }
+      if (
+        canonicalAddress(selected.attempt.delegatedOwnerAddress, "bound delegation owner address") !==
+        validated.ownerAddressHex
+      ) throw new Error("Signer bound owner address mismatch");
+      if (
+        canonicalAddress(selected.attempt.delegatedReceiverAddress, "bound delegation receiver address") !==
+        validated.receiverAddressHex
+      ) throw new Error("Signer bound receiver address mismatch");
+      if (selected.attempt.delegatedResource !== "ENERGY") throw new Error("Signer bound resource mismatch");
+      if (selected.attempt.delegatedBalanceSun !== validated.balanceSun) {
+        throw new Error("Signer bound delegation balance mismatch");
       }
 
       const existingTxid = selected.attempt.signerUnsignedTxid;

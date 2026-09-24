@@ -1,3 +1,5 @@
+import { TronWeb } from "tronweb";
+
 import type {
   EnergyDeliveryRequest,
   EnergyDeliveryResult,
@@ -11,6 +13,13 @@ const TXID_PATTERN = /^[0-9a-fA-F]{64}$/;
 export interface TronEnergyResourceSnapshot {
   readonly totalEnergyLimit: bigint;
   readonly totalEnergyWeight: bigint;
+}
+
+export interface TronDelegationBinding {
+  readonly ownerAddress: string;
+  readonly receiverAddress: string;
+  readonly resource: "ENERGY";
+  readonly balanceSun: bigint;
 }
 
 export function requiredDelegationSun(
@@ -164,6 +173,7 @@ export interface ProviderTransactionAttemptEntry {
   readonly attemptKey: string;
   readonly txid: string | null;
   readonly expirationAt: Date | null;
+  readonly delegationBinding: TronDelegationBinding | null;
   readonly status: ProviderTransactionAttemptStatus;
   readonly lastBroadcastResult: ProviderBroadcastResult | null;
   readonly lastChainStatus: ProviderChainStatus | null;
@@ -174,6 +184,12 @@ export interface EnergyProviderAttemptJournal {
   getOrCreateCurrentAttempt(input: {
     readonly idempotencyKey: string;
     readonly providerName: string;
+  }): Promise<ProviderTransactionAttemptEntry>;
+
+  bindDelegation(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly binding: TronDelegationBinding;
   }): Promise<ProviderTransactionAttemptEntry>;
 
   claimAttemptTransaction(input: {
@@ -198,6 +214,129 @@ export interface EnergyProviderAttemptJournal {
   }): Promise<readonly ProviderTransactionAttemptEntry[]>;
 }
 
+
+export type ProviderReclaimAttemptStatus =
+  | "created"
+  | "signed"
+  | "accepted"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "expired"
+  | "unknown";
+
+export interface ProviderReclaimAttemptEntry {
+  readonly id: string;
+  readonly sourceProviderTransactionAttemptId: string;
+  readonly attemptNumber: number;
+  readonly attemptKey: string;
+  readonly txid: string | null;
+  readonly expirationAt: Date | null;
+  readonly status: ProviderReclaimAttemptStatus;
+  readonly lastBroadcastResult: ProviderBroadcastResult | null;
+  readonly lastChainStatus: ProviderChainStatus | null;
+  readonly lastChainObservedAt: Date | null;
+}
+
+export interface EnergyReclaimAttemptJournal {
+  getOrCreateCurrentAttempt(input: {
+    readonly sourceProviderTransactionAttemptId: string;
+    readonly providerName: string;
+  }): Promise<ProviderReclaimAttemptEntry>;
+
+  listAttempts(input: {
+    readonly sourceProviderTransactionAttemptId: string;
+    readonly providerName: string;
+  }): Promise<readonly ProviderReclaimAttemptEntry[]>;
+}
+
+const TRON_HEX_ADDRESS_PATTERN = /^41[0-9a-fA-F]{40}$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function canonicalBase58Address(value: string, field: string): string {
+  const trimmed = value.trim();
+  try {
+    const hex = TRON_HEX_ADDRESS_PATTERN.test(trimmed)
+      ? trimmed
+      : TronWeb.address.toHex(trimmed);
+    const base58 = TronWeb.address.fromHex(hex);
+    if (typeof base58 !== "string" || base58.trim() === "") throw new Error("invalid");
+    return base58;
+  } catch {
+    throw new Error(`${field} must be a valid TRON address`);
+  }
+}
+
+function delegationBindingFromTransaction(
+  transaction: Record<string, unknown>,
+): TronDelegationBinding {
+  const rawData = transaction.raw_data;
+  if (!isRecord(rawData) || !Array.isArray(rawData.contract)) {
+    throw new Error("TRON delegation transaction raw_data is malformed");
+  }
+  if (rawData.contract.length !== 1 || !isRecord(rawData.contract[0])) {
+    throw new Error("TRON delegation transaction must contain exactly one contract");
+  }
+  const contract = rawData.contract[0];
+  if (contract.type !== "DelegateResourceContract") {
+    throw new Error("TRON delegation transaction contract type mismatch");
+  }
+  const parameter = contract.parameter;
+  if (!isRecord(parameter) || !isRecord(parameter.value)) {
+    throw new Error("TRON DelegateResource parameter is malformed");
+  }
+  const value = parameter.value;
+  if (value.resource !== "ENERGY") throw new Error("TRON delegation transaction must use ENERGY");
+  if (value.lock === true) throw new Error("TRON delegation transaction must be unlocked");
+  if (value.lock_period !== undefined && value.lock_period !== 0 && value.lock_period !== "0") {
+    throw new Error("TRON delegation transaction lock period is not allowed");
+  }
+  const balance = value.balance;
+  if (typeof balance !== "number" || !Number.isSafeInteger(balance) || balance < Number(SUN_PER_TRX)) {
+    throw new Error("TRON delegation balance is invalid");
+  }
+  return {
+    ownerAddress: canonicalBase58Address(
+      requireNonEmptyString(value.owner_address, "DelegateResource owner_address"),
+      "DelegateResource owner_address",
+    ),
+    receiverAddress: canonicalBase58Address(
+      requireNonEmptyString(value.receiver_address, "DelegateResource receiver_address"),
+      "DelegateResource receiver_address",
+    ),
+    resource: "ENERGY",
+    balanceSun: BigInt(balance),
+  };
+}
+
+function assertBindingMatchesExpected(
+  binding: TronDelegationBinding,
+  expected: {
+    readonly ownerAddress: string;
+    readonly receiverAddress: string;
+    readonly balanceSun?: bigint;
+  },
+): void {
+  if (binding.ownerAddress !== canonicalBase58Address(expected.ownerAddress, "expected owner address")) {
+    throw new Error("TRON delegation owner address mismatch");
+  }
+  if (binding.receiverAddress !== canonicalBase58Address(expected.receiverAddress, "expected receiver address")) {
+    throw new Error("TRON delegation receiver address mismatch");
+  }
+  if (expected.balanceSun !== undefined && binding.balanceSun !== expected.balanceSun) {
+    throw new Error("TRON delegation balance mismatch");
+  }
+}
 
 function requireTxid(
   value: string,
@@ -408,6 +547,15 @@ export class TronOwnPoolEnergyProvider implements EnergyProvider {
     if (attempt.status === "created") {
       const recovered = await this.recoverSignedTransaction(attempt.attemptKey);
       if (recovered === undefined) return undefined;
+      if (attempt.delegationBinding === null) {
+        throw new Error("TRON provider attempt is missing delegation binding");
+      }
+      const recoveredBinding = delegationBindingFromTransaction(recovered.transaction);
+      assertBindingMatchesExpected(recoveredBinding, {
+        ownerAddress: attempt.delegationBinding.ownerAddress,
+        receiverAddress: attempt.delegationBinding.receiverAddress,
+        balanceSun: attempt.delegationBinding.balanceSun,
+      });
       const expirationAt = transactionExpirationAt(recovered.transaction);
       const claimed = await this.attemptJournal.claimAttemptTransaction({
         attemptKey: attempt.attemptKey,
@@ -478,6 +626,19 @@ export class TronOwnPoolEnergyProvider implements EnergyProvider {
   ): Promise<EnergyDeliveryResult> {
     const recovered = await this.recoverSignedTransaction(attempt.attemptKey);
     if (recovered !== undefined) {
+      const recoveredBinding = delegationBindingFromTransaction(recovered.transaction);
+      assertBindingMatchesExpected(recoveredBinding, {
+        ownerAddress: this.ownerAddress,
+        receiverAddress: request.recipientAddress,
+      });
+      const boundAttempt = await this.attemptJournal.bindDelegation({
+        attemptKey: attempt.attemptKey,
+        providerName: this.name,
+        binding: recoveredBinding,
+      });
+      if (boundAttempt.delegationBinding === null) {
+        throw new Error("TRON provider attempt delegation binding was not persisted");
+      }
       const expirationAt = transactionExpirationAt(recovered.transaction);
       const claimed = await this.attemptJournal.claimAttemptTransaction({
         attemptKey: attempt.attemptKey,
@@ -488,8 +649,18 @@ export class TronOwnPoolEnergyProvider implements EnergyProvider {
       return this.broadcastAttempt(request.idempotencyKey, claimed, recovered);
     }
 
-    const snapshot = await this.transport.getEnergyResourceSnapshot(this.ownerAddress);
-    const balanceSun = requiredDelegationSun(request.energyAmount, snapshot);
+    let balanceSun = attempt.delegationBinding?.balanceSun;
+    if (attempt.delegationBinding !== null) {
+      assertBindingMatchesExpected(attempt.delegationBinding, {
+        ownerAddress: this.ownerAddress,
+        receiverAddress: request.recipientAddress,
+      });
+    } else {
+      const snapshot = await this.transport.getEnergyResourceSnapshot(this.ownerAddress);
+      balanceSun = requiredDelegationSun(request.energyAmount, snapshot);
+    }
+    if (balanceSun === undefined) throw new Error("TRON delegation balance is unavailable");
+
     const maxDelegatable = await this.transport.getCanDelegatedEnergySun(this.ownerAddress);
     if (maxDelegatable < balanceSun) {
       await this.attemptJournal.recordAttemptState({
@@ -509,6 +680,18 @@ export class TronOwnPoolEnergyProvider implements EnergyProvider {
       recipientAddress: request.recipientAddress,
       balanceSun,
     });
+    const unsignedBinding = delegationBindingFromTransaction(unsigned.transaction);
+    assertBindingMatchesExpected(unsignedBinding, {
+      ownerAddress: this.ownerAddress,
+      receiverAddress: request.recipientAddress,
+      balanceSun,
+    });
+    await this.attemptJournal.bindDelegation({
+      attemptKey: attempt.attemptKey,
+      providerName: this.name,
+      binding: unsignedBinding,
+    });
+
     const unsignedTxid = requireTxid(unsigned.txid, "unsigned txid");
     const expirationAt = transactionExpirationAt(unsigned.transaction);
     const signed = assertSignedTransaction(

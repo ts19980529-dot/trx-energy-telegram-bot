@@ -6,6 +6,7 @@ import { TronWeb, utils } from "tronweb";
 import { PostgresEnergyUsageRepository } from "../src/adapters/database/postgres-energy-usage-repository.js";
 import { PostgresEnergyProviderJournal } from "../src/adapters/database/postgres-energy-provider-journal.js";
 import { PostgresEnergyProviderAttemptJournal } from "../src/adapters/database/postgres-energy-provider-attempt-journal.js";
+import { PostgresEnergyReclaimAttemptJournal } from "../src/adapters/database/postgres-energy-reclaim-attempt-journal.js";
 import {
   createPostgresResource,
   type PostgresResource,
@@ -42,6 +43,7 @@ if (typeof SIGNER_OWNER !== "string") {
 function unsignedDelegation(
   now: number,
   balance = 1_000_000,
+  receiverAddress = RECIPIENT,
 ) {
   const base = {
     visible: true,
@@ -51,7 +53,7 @@ function unsignedDelegation(
           parameter: {
             value: {
               owner_address: SIGNER_OWNER,
-              receiver_address: RECIPIENT,
+              receiver_address: receiverAddress,
               balance,
               resource: "ENERGY",
               lock: false,
@@ -521,6 +523,16 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
 
     const firstTxid = "c".repeat(64);
     const firstExpiration = new Date(Date.now() - 5_000);
+    await attempts.bindDelegation({
+      attemptKey: firstAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: SIGNER_OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 1_000_000n,
+      },
+    });
     const firstSigned = await attempts.claimAttemptTransaction({
       attemptKey: firstAttempt.attemptKey,
       providerName: "tron-own-pool",
@@ -558,6 +570,16 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     if (secondAttempt === undefined) throw new Error("Expected replacement provider transaction attempt");
     expect(secondAttempt).toMatchObject({ attemptNumber: 2, attemptKey: `${delivery.idempotencyKey}:attempt:2`, txid: null, status: "created" });
     const secondTxid = "e".repeat(64);
+    await attempts.bindDelegation({
+      attemptKey: secondAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: SIGNER_OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 1_000_000n,
+      },
+    });
     await attempts.claimAttemptTransaction({
       attemptKey: secondAttempt.attemptKey,
       providerName: "tron-own-pool",
@@ -658,6 +680,16 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
 
     const now = Date.now();
     const unsigned = unsignedDelegation(now);
+    await attempts.bindDelegation({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: SIGNER_OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 1_000_000n,
+      },
+    });
     const signer = new PostgresTronDelegationSigner(
       resource.db,
       SIGNER_OWNER,
@@ -747,6 +779,143 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       providerName: "tron-own-pool",
       txid: unsigned.txid,
       expirationAt: new Date(now + 60_000),
+    });
+  });
+
+
+  it("fails closed when the signer receiver differs from the durable delegation binding", async () => {
+    const telegramUserId = 9_200_000_000_010n;
+    await customer(telegramUserId, 1);
+
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:signer-binding:1",
+    });
+    if (reservation.kind !== "ready") throw new Error("Expected ready Energy reservation");
+
+    const dispatch = await energy.startDispatch({
+      orderId: reservation.order.id,
+      providerName: "tron-own-pool",
+    });
+    const delivery = dispatch.order.delivery;
+    if (delivery === null) throw new Error("Expected provider delivery");
+
+    const attempts = new PostgresEnergyProviderAttemptJournal(resource.db);
+    const attempt = await attempts.getOrCreateCurrentAttempt({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+    });
+    await attempts.bindDelegation({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: SIGNER_OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 1_000_000n,
+      },
+    });
+
+    const now = Date.now();
+    const signer = new PostgresTronDelegationSigner(
+      resource.db,
+      SIGNER_OWNER,
+      SIGNER_PRIVATE_KEY,
+      () => now,
+    );
+    const mismatched = unsignedDelegation(now, 1_000_000, SIGNER_OWNER);
+
+    await expect(
+      signer.sign({
+        attemptKey: attempt.attemptKey,
+        unsigned: mismatched,
+      }),
+    ).rejects.toThrow("Signer bound receiver address mismatch");
+  });
+
+  it("creates exactly one reclaim attempt only after the completed delegation is eligible", async () => {
+    const telegramUserId = 9_200_000_000_011n;
+    await customer(telegramUserId, 1);
+
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:reclaim-attempt:1",
+    });
+    if (reservation.kind !== "ready") throw new Error("Expected ready Energy reservation");
+
+    const dispatch = await energy.startDispatch({
+      orderId: reservation.order.id,
+      providerName: "tron-own-pool",
+    });
+    const delivery = dispatch.order.delivery;
+    if (delivery === null) throw new Error("Expected provider delivery");
+
+    const attempts = new PostgresEnergyProviderAttemptJournal(resource.db);
+    const attempt = await attempts.getOrCreateCurrentAttempt({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+    });
+    await attempts.bindDelegation({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: SIGNER_OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 1_000_000n,
+      },
+    });
+    await attempts.claimAttemptTransaction({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      txid: "f".repeat(64),
+      expirationAt: new Date(Date.now() + 60_000),
+    });
+    await attempts.recordAttemptState({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      status: "accepted",
+      lastBroadcastResult: "accepted",
+    });
+    const completed = await attempts.recordAttemptState({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      status: "completed",
+      lastChainStatus: "completed",
+    });
+    if (completed.delegationBinding === null) throw new Error("Expected delegation binding");
+
+    const beforeEligible = new PostgresEnergyReclaimAttemptJournal(resource.db, () => Date.now());
+    await expect(
+      beforeEligible.getOrCreateCurrentAttempt({
+        sourceProviderTransactionAttemptId: completed.id,
+        providerName: "tron-own-pool",
+      }),
+    ).rejects.toThrow("Energy reclaim is not yet eligible");
+
+    const future = new PostgresEnergyReclaimAttemptJournal(
+      resource.db,
+      () => Date.now() + 2 * 60 * 60 * 1000,
+    );
+    const reclaimAttempts = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        future.getOrCreateCurrentAttempt({
+          sourceProviderTransactionAttemptId: completed.id,
+          providerName: "tron-own-pool",
+        }),
+      ),
+    );
+    expect(new Set(reclaimAttempts.map((item) => item.id)).size).toBe(1);
+    expect(reclaimAttempts[0]).toMatchObject({
+      sourceProviderTransactionAttemptId: completed.id,
+      attemptNumber: 1,
+      attemptKey: `${completed.attemptKey}:reclaim:1`,
+      txid: null,
+      status: "created",
     });
   });
 

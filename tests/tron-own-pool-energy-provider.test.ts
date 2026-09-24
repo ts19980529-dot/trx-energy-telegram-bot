@@ -9,6 +9,7 @@ import {
   type ProviderTransactionAttemptEntry,
   type ProviderTransactionAttemptStatus,
   type TronTransactionObservation,
+  type TronDelegationBinding,
   type TronDelegationSigner,
   type TronDelegationTransport,
   type TronEnergyResourceSnapshot,
@@ -94,6 +95,7 @@ class MemoryJournal implements EnergyProviderJournal {
 
 class MemoryAttemptJournal implements EnergyProviderAttemptJournal {
   private readonly attempts = new Map<string, ProviderTransactionAttemptEntry[]>();
+  onBind: (() => void) | undefined;
   onClaim: (() => void) | undefined;
 
   constructor(private readonly deliveryJournal: MemoryJournal) {}
@@ -113,6 +115,7 @@ class MemoryAttemptJournal implements EnergyProviderAttemptJournal {
       attemptKey: `${input.idempotencyKey}:attempt:${attemptNumber}`,
       txid: null,
       expirationAt: null,
+      delegationBinding: null,
       status: "created",
       lastBroadcastResult: null,
       lastChainStatus: null,
@@ -120,6 +123,30 @@ class MemoryAttemptJournal implements EnergyProviderAttemptJournal {
     };
     this.attempts.set(input.idempotencyKey, [...items, created]);
     return created;
+  }
+
+  async bindDelegation(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly binding: TronDelegationBinding;
+  }): Promise<ProviderTransactionAttemptEntry> {
+    const located = this.locate(input.attemptKey);
+    if (located.attempt.delegationBinding !== null) {
+      if (
+        located.attempt.delegationBinding.ownerAddress !== input.binding.ownerAddress ||
+        located.attempt.delegationBinding.receiverAddress !== input.binding.receiverAddress ||
+        located.attempt.delegationBinding.resource !== input.binding.resource ||
+        located.attempt.delegationBinding.balanceSun !== input.binding.balanceSun
+      ) throw new Error("binding changed");
+      return located.attempt;
+    }
+    const updated: ProviderTransactionAttemptEntry = {
+      ...located.attempt,
+      delegationBinding: input.binding,
+    };
+    located.items[located.index] = updated;
+    this.onBind?.();
+    return updated;
   }
 
   async claimAttemptTransaction(input: {
@@ -137,6 +164,7 @@ class MemoryAttemptJournal implements EnergyProviderAttemptJournal {
       return located.attempt;
     }
     if (located.attempt.status !== "created") throw new Error("attempt not created");
+    if (located.attempt.delegationBinding === null) throw new Error("binding missing");
     const updated: ProviderTransactionAttemptEntry = {
       ...located.attempt,
       txid: input.txid,
@@ -235,9 +263,19 @@ class FakeTransport implements TronDelegationTransport {
       txid,
       transaction: {
         txID: txid,
-        raw_data: { expiration },
-        owner_address: input.ownerAddress,
-        receiver_address: input.recipientAddress,
+        raw_data: {
+          expiration,
+          contract: [{
+            type: "DelegateResourceContract",
+            parameter: { value: {
+              owner_address: input.ownerAddress,
+              receiver_address: input.recipientAddress,
+              balance: Number(input.balanceSun),
+              resource: "ENERGY",
+              lock: false,
+            } },
+          }],
+        },
       },
     };
   }
@@ -277,7 +315,19 @@ class FakeSigner implements TronDelegationSigner {
       txid,
       transaction: {
         txID: txid,
-        raw_data: { expiration },
+        raw_data: {
+          expiration,
+          contract: [{
+            type: "DelegateResourceContract",
+            parameter: { value: {
+              owner_address: OWNER,
+              receiver_address: RECIPIENT,
+              balance: 18_055_556,
+              resource: "ENERGY",
+              lock: false,
+            } },
+          }],
+        },
         signature: ["test-signature"],
       },
     });
@@ -393,6 +443,9 @@ describe("TRON own-pool Energy provider", () => {
     const transport = new FakeTransport();
     const signer = new FakeSigner();
 
+    attempts.onBind = () => {
+      transport.events.push("bind");
+    };
     attempts.onClaim = () => {
       transport.events.push("claim");
     };
@@ -416,9 +469,20 @@ describe("TRON own-pool Energy provider", () => {
     });
     expect(transport.events).toEqual([
       "build",
+      "bind",
       "claim",
       "broadcast",
     ]);
+    const [boundAttempt] = await attempts.listAttempts({
+      idempotencyKey: key,
+      providerName: "tron-own-pool",
+    });
+    expect(boundAttempt?.delegationBinding).toEqual({
+      ownerAddress: OWNER,
+      receiverAddress: RECIPIENT,
+      resource: "ENERGY",
+      balanceSun: 18_055_556n,
+    });
     expect(transport.lastBalanceSun).toBe(18_055_556n);
   });
 
@@ -539,6 +603,16 @@ describe("TRON own-pool Energy provider", () => {
       idempotencyKey: key,
       providerName: "tron-own-pool",
     });
+    await attempts.bindDelegation({
+      attemptKey: firstAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 18_055_556n,
+      },
+    });
     await attempts.claimAttemptTransaction({
       attemptKey: firstAttempt.attemptKey,
       providerName: "tron-own-pool",
@@ -580,6 +654,16 @@ describe("TRON own-pool Energy provider", () => {
     const firstAttempt = await attempts.getOrCreateCurrentAttempt({
       idempotencyKey: key,
       providerName: "tron-own-pool",
+    });
+    await attempts.bindDelegation({
+      attemptKey: firstAttempt.attemptKey,
+      providerName: "tron-own-pool",
+      binding: {
+        ownerAddress: OWNER,
+        receiverAddress: RECIPIENT,
+        resource: "ENERGY",
+        balanceSun: 18_055_556n,
+      },
     });
     await attempts.claimAttemptTransaction({
       attemptKey: firstAttempt.attemptKey,

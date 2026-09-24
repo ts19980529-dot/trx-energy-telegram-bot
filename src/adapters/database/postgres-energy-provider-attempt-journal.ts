@@ -12,6 +12,7 @@ import type {
   ProviderChainStatus,
   ProviderTransactionAttemptEntry,
   ProviderTransactionAttemptStatus,
+  TronDelegationBinding,
 } from "../energy/tron-own-pool-energy-provider.js";
 type AttemptRow = typeof providerTransactionAttempts.$inferSelect;
 
@@ -57,6 +58,35 @@ function parseChainStatus(value: string | null): ProviderChainStatus | null {
   }
 }
 
+function toDelegationBinding(row: AttemptRow): TronDelegationBinding | null {
+  const values = [
+    row.delegatedOwnerAddress,
+    row.delegatedReceiverAddress,
+    row.delegatedResource,
+    row.delegatedBalanceSun,
+  ];
+  const present = values.filter((value) => value !== null).length;
+  if (present === 0) return null;
+  if (present !== values.length) {
+    throw new Error("Provider transaction attempt delegation binding is incomplete");
+  }
+  if (
+    row.delegatedOwnerAddress === null ||
+    row.delegatedReceiverAddress === null ||
+    row.delegatedResource !== "ENERGY" ||
+    row.delegatedBalanceSun === null ||
+    row.delegatedBalanceSun < 1_000_000n
+  ) {
+    throw new Error("Provider transaction attempt delegation binding is invalid");
+  }
+  return {
+    ownerAddress: row.delegatedOwnerAddress,
+    receiverAddress: row.delegatedReceiverAddress,
+    resource: "ENERGY",
+    balanceSun: row.delegatedBalanceSun,
+  };
+}
+
 function toAttempt(row: AttemptRow): ProviderTransactionAttemptEntry {
   return {
     id: row.id,
@@ -65,6 +95,7 @@ function toAttempt(row: AttemptRow): ProviderTransactionAttemptEntry {
     attemptKey: row.attemptKey,
     txid: row.txid,
     expirationAt: row.expirationAt,
+    delegationBinding: toDelegationBinding(row),
     status: parseAttemptStatus(row.status),
     lastBroadcastResult: parseBroadcastResult(row.lastBroadcastResult),
     lastChainStatus: parseChainStatus(row.lastChainStatus),
@@ -156,6 +187,66 @@ export class PostgresEnergyProviderAttemptJournal
     });
   }
 
+  async bindDelegation(input: {
+    readonly attemptKey: string;
+    readonly providerName: string;
+    readonly binding: TronDelegationBinding;
+  }): Promise<ProviderTransactionAttemptEntry> {
+    const ownerAddress = input.binding.ownerAddress.trim();
+    const receiverAddress = input.binding.receiverAddress.trim();
+    if (ownerAddress === "" || receiverAddress === "") {
+      throw new Error("Provider delegation binding addresses must not be empty");
+    }
+    if (input.binding.resource !== "ENERGY" || input.binding.balanceSun < 1_000_000n) {
+      throw new Error("Provider delegation binding is invalid");
+    }
+
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(
+          hashtext('energy-provider-attempt-binding'),
+          hashtext(${input.attemptKey})
+        )`,
+      );
+      const [selected] = await tx
+        .select({ attempt: providerTransactionAttempts, providerName: providerDeliveries.providerName })
+        .from(providerTransactionAttempts)
+        .innerJoin(providerDeliveries, eq(providerDeliveries.id, providerTransactionAttempts.providerDeliveryId))
+        .where(eq(providerTransactionAttempts.attemptKey, input.attemptKey))
+        .limit(1)
+        .for("update");
+      if (selected === undefined) throw new Error("Provider transaction attempt is missing");
+      if (selected.providerName !== input.providerName) throw new Error("Energy provider journal owner changed");
+
+      const existing = toDelegationBinding(selected.attempt);
+      if (existing !== null) {
+        if (
+          existing.ownerAddress !== ownerAddress ||
+          existing.receiverAddress !== receiverAddress ||
+          existing.resource !== input.binding.resource ||
+          existing.balanceSun !== input.binding.balanceSun
+        ) throw new Error("Energy provider delegation binding changed");
+        return toAttempt(selected.attempt);
+      }
+      if (selected.attempt.status !== "created" || selected.attempt.txid !== null) {
+        throw new Error("Provider transaction attempt can no longer bind delegation");
+      }
+      const [updated] = await tx
+        .update(providerTransactionAttempts)
+        .set({
+          delegatedOwnerAddress: ownerAddress,
+          delegatedReceiverAddress: receiverAddress,
+          delegatedResource: "ENERGY",
+          delegatedBalanceSun: input.binding.balanceSun,
+          updatedAt: new Date(),
+        })
+        .where(eq(providerTransactionAttempts.id, selected.attempt.id))
+        .returning();
+      if (updated === undefined) throw new Error("Provider delegation binding update returned no row");
+      return toAttempt(updated);
+    });
+  }
+
   async claimAttemptTransaction(input: {
     readonly attemptKey: string;
     readonly providerName: string;
@@ -183,6 +274,9 @@ export class PostgresEnergyProviderAttemptJournal
 
       if (selected === undefined) throw new Error("Provider transaction attempt is missing");
       if (selected.providerName !== input.providerName) throw new Error("Energy provider journal owner changed");
+      if (toDelegationBinding(selected.attempt) === null) {
+        throw new Error("Provider transaction attempt delegation binding is missing");
+      }
 
       if (selected.attempt.txid !== null) {
         if (
@@ -253,6 +347,9 @@ export class PostgresEnergyProviderAttemptJournal
       if (selected.providerName !== input.providerName) throw new Error("Energy provider journal owner changed");
 
       const current = parseAttemptStatus(selected.attempt.status);
+      if (input.status === "completed" && toDelegationBinding(selected.attempt) === null) {
+        throw new Error("Completed provider transaction attempt requires delegation binding");
+      }
       if (!transitionAllowed(current, input.status)) throw new Error(`Invalid provider transaction attempt transition: ${current} -> ${input.status}`);
 
       const chainObservedAt =
