@@ -3,6 +3,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PostgresEnergyUsageRepository } from "../src/adapters/database/postgres-energy-usage-repository.js";
+import { PostgresEnergyProviderJournal } from "../src/adapters/database/postgres-energy-provider-journal.js";
 import {
   createPostgresResource,
   type PostgresResource,
@@ -351,5 +352,86 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       requiredCount: 1,
     });
     expect(provider.createCalls).toBe(0);
+  });
+
+  it("claims a provider txid once and rejects transaction identity changes", async () => {
+    const telegramUserId = 9_200_000_000_007n;
+    await customer(telegramUserId, 1);
+
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:journal:1",
+    });
+
+    expect(reservation.kind).toBe("ready");
+    if (reservation.kind !== "ready") {
+      throw new Error("Expected ready Energy reservation");
+    }
+
+    const dispatch = await energy.startDispatch({
+      orderId: reservation.order.id,
+      providerName: "tron-own-pool",
+    });
+
+    expect(dispatch.created).toBe(true);
+    expect(dispatch.order.delivery).not.toBeNull();
+
+    const delivery = dispatch.order.delivery;
+    if (delivery === null) {
+      throw new Error("Expected provider delivery");
+    }
+
+    const journal = new PostgresEnergyProviderJournal(
+      resource.db,
+    );
+    const txid = "a".repeat(64);
+    const conflictingTxid = "b".repeat(64);
+
+    expect(
+      await journal.findByIdempotencyKey(
+        delivery.idempotencyKey,
+      ),
+    ).toMatchObject({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+      providerOrderId: null,
+      status: "pending",
+    });
+
+    await journal.claimProviderOrderId({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+      providerOrderId: txid,
+    });
+
+    await journal.claimProviderOrderId({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+      providerOrderId: txid,
+    });
+
+    expect(
+      await journal.findByProviderOrderId({
+        providerName: "tron-own-pool",
+        providerOrderId: txid,
+      }),
+    ).toMatchObject({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+      providerOrderId: txid,
+      status: "pending",
+    });
+
+    await expect(
+      journal.claimProviderOrderId({
+        idempotencyKey: delivery.idempotencyKey,
+        providerName: "tron-own-pool",
+        providerOrderId: conflictingTxid,
+      }),
+    ).rejects.toThrow(
+      "Energy provider transaction identity changed",
+    );
   });
 });
