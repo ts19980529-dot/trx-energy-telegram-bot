@@ -185,7 +185,7 @@ export function createTelegramBot(
     await ctx.reply("请发送需要接收能量的 TRON 地址。");
   });
 
-  bot.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
+  handlers.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
     if (ctx.from === undefined) {
       return;
     }
@@ -577,6 +577,14 @@ export function createTelegramBot(
     }
 
     await ctx.reply(`当前权限：${adminRoleLabel(role)}`);
+  });
+
+  handlers.on("message:text", async (ctx) => {
+    await ctx.reply(
+      services.energyUsage === undefined
+        ? "未识别输入，请发送 /start 打开服务菜单。"
+        : "未识别输入，请发送有效的 TRON 地址，或发送 /start 返回菜单。",
+    );
   });
 
   bot.catch((err) => {

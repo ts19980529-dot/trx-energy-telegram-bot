@@ -198,6 +198,20 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
   });
 
+  it("responds to unrecognized private text with a menu hint", async () => {
+    const calls: string[] = [];
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: { async execute() { return { kind: "ready", packages: [] }; } },
+      packageSelection: { async select() { return { kind: "unavailable" }; } },
+      adminAccess: { async getRole() { return undefined; } },
+    }, { botInfo: botInfo(), client: { fetch: mockFetch(calls) } });
+    await bot.handleUpdate({ update_id: 103, message: {
+      message_id: 103, date: 1_700_000_000, chat: privateChat(), from: user(),
+      text: "不是地址",
+    } });
+    expect(calls.filter((url) => url.endsWith("/sendMessage"))).toHaveLength(1);
+  });
+
   it("acknowledges the package menu while its database query is pending", async () => {
     const calls: string[] = [];
     let release!: () => void;

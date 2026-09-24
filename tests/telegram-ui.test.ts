@@ -102,6 +102,32 @@ describe("Telegram package UI", () => {
     ).toBeUndefined();
   });
 
+  it("keeps exact payment instructions visible after refreshing a pending order", () => {
+    const message = formatPurchaseOrderStatus({
+      id: "22222222-2222-4222-8222-222222222222",
+      status: "waiting_payment",
+      payment: {
+        packageCodeSnapshot: "demo", countSnapshot: 10,
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAttributionOffsetAtomic: 137n,
+        paymentAsset: "USDT",
+        paymentToAddressSnapshot: "TTEST_DESTINATION",
+        paymentTokenContractAddressSnapshot: "TTEST_USDT",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 17_000_137n,
+        quoteExpiresAt: new Date("2026-09-22T03:00:00.000Z"),
+      },
+      availableCount: 0,
+      updatedAt: new Date("2026-09-22T02:50:00.000Z"),
+    });
+    expect(message).toContain("应付金额：17.000137 USDT");
+    expect(message).toContain("支付方式：USDT-TRC20");
+    expect(message).toContain("收款地址：TTEST_DESTINATION");
+    expect(message).toContain("有效期：2026-09-22 03:00:00 UTC");
+    expect(message).toContain("过期请重新下单");
+    expect(message).toContain("\n收款地址：");
+  });
+
   it("renders credited order status with the current package balance", () => {
     expect(
       formatPurchaseOrderStatus({

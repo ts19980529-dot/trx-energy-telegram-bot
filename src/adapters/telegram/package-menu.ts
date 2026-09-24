@@ -219,20 +219,35 @@ function purchaseOrderStatusLabel(
 export function formatPurchaseOrderStatus(
   order: PurchaseOrderStatusView,
 ): string {
+  const payment = order.payment;
   const amount =
-    order.payment.paymentAsset === "USDT"
-      ? formatUsdtMicros(order.payment.quotedAmountAtomic)
-      : formatTrxSun(order.payment.quotedAmountAtomic);
-  const amountUnit =
-    order.payment.paymentAsset === "USDT" ? "USDT" : "TRX";
+    payment.paymentAsset === "USDT"
+      ? formatUsdtMicros(payment.quotedAmountAtomic)
+      : formatTrxSun(payment.quotedAmountAtomic);
+  const amountUnit = payment.paymentAsset === "USDT" ? "USDT" : "TRX";
+  const awaitingPayment =
+    order.status === "created" || order.status === "waiting_payment";
+  const inProgress =
+    awaitingPayment || order.status === "payment_detected" || order.status === "confirming";
 
   return [
     "订单状态",
     "",
     `订单编号：${order.id}`,
-    `套餐：${order.payment.countSnapshot} 笔`,
+    `套餐：${payment.countSnapshot} 笔`,
     `应付金额：${amount} ${amountUnit}`,
     `状态：${purchaseOrderStatusLabel(order.status)}`,
+    ...(inProgress
+      ? [
+          `支付方式：${payment.paymentAsset === "USDT" ? "USDT-TRC20" : "TRX"}`,
+          `收款地址：${payment.paymentToAddressSnapshot}`,
+          `链上确认：${payment.requiredConfirmationsSnapshot} 次`,
+          `有效期：${formatUtcTimestamp(payment.quoteExpiresAt)}`,
+        ]
+      : []),
+    ...(awaitingPayment
+      ? ["请在有效期内按应付金额转账；过期请重新下单。"]
+      : []),
     `可用笔数余额：${order.availableCount} 笔`,
     `更新时间：${formatUtcTimestamp(order.updatedAt)}`,
   ].join("\n");
