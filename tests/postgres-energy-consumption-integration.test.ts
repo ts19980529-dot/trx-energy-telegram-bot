@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TronWeb, utils } from "tronweb";
 
 import { PostgresEnergyUsageRepository } from "../src/adapters/database/postgres-energy-usage-repository.js";
 import { PostgresEnergyProviderJournal } from "../src/adapters/database/postgres-energy-provider-journal.js";
@@ -10,6 +11,7 @@ import {
   type PostgresResource,
 } from "../src/adapters/database/postgres.js";
 import { PostgresTelegramUserRepository } from "../src/adapters/database/postgres-telegram-repositories.js";
+import { PostgresTronDelegationSigner } from "../src/adapters/signer/postgres-tron-delegation-signer.js";
 import { NodeTronAddressCodec } from "../src/adapters/tron/node-tron-address-codec.js";
 import { EnergyUsageService } from "../src/application/energy/energy-usage-service.js";
 import type {
@@ -22,12 +24,69 @@ import {
   balanceLedger,
   energyOptions,
   packageBalances,
+  providerTransactionAttempts,
 } from "../src/db/schema.js";
 import { bootstrapCatalogIfNeeded } from "../src/runtime/catalog-bootstrap.js";
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describePostgres = TEST_DATABASE_URL === undefined ? describe.skip : describe;
 const RECIPIENT = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
+const SIGNER_PRIVATE_KEY = "1".repeat(64);
+const SIGNER_OWNER = TronWeb.address.fromPrivateKey(
+  SIGNER_PRIVATE_KEY,
+);
+if (typeof SIGNER_OWNER !== "string") {
+  throw new Error("Test signer private key is invalid");
+}
+
+function unsignedDelegation(
+  now: number,
+  balance = 1_000_000,
+) {
+  const base = {
+    visible: true,
+    raw_data: {
+      contract: [
+        {
+          parameter: {
+            value: {
+              owner_address: SIGNER_OWNER,
+              receiver_address: RECIPIENT,
+              balance,
+              resource: "ENERGY",
+              lock: false,
+            },
+            type_url:
+              "type.googleapis.com/protocol.DelegateResourceContract",
+          },
+          type: "DelegateResourceContract",
+        },
+      ],
+      ref_block_bytes: "0001",
+      ref_block_hash: "0000000000000000",
+      expiration: now + 60_000,
+      timestamp: now,
+    },
+  };
+  const protobuf = utils.transaction.txJsonToPb(base);
+  const rawDataHex =
+    utils.transaction.txPbToRawDataHex(protobuf);
+  const txid = String(
+    utils.transaction.txPbToTxID(protobuf),
+  )
+    .replace(/^0x/, "")
+    .toLowerCase();
+
+  return {
+    txid,
+    transaction: {
+      ...base,
+      txID: txid,
+      raw_data_hex: rawDataHex,
+    },
+  };
+}
+
 
 class FakeEnergyProvider implements EnergyProvider {
   readonly name = "fake-energy";
@@ -511,6 +570,133 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       { attemptNumber: 2, txid: secondTxid, status: "signed" },
     ]);
     expect(await new PostgresEnergyProviderJournal(resource.db).findByIdempotencyKey(delivery.idempotencyKey)).toMatchObject({ providerOrderId: secondTxid });
+  });
+
+
+  it("durably binds one safe unsigned delegation to one signer attempt across concurrency and restart", async () => {
+    const telegramUserId = 9_200_000_000_009n;
+    await customer(telegramUserId, 1);
+
+    const reservation = await energy.reserve({
+      telegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:signer-journal:1",
+    });
+    expect(reservation.kind).toBe("ready");
+    if (reservation.kind !== "ready") {
+      throw new Error("Expected ready Energy reservation");
+    }
+
+    const dispatch = await energy.startDispatch({
+      orderId: reservation.order.id,
+      providerName: "tron-own-pool",
+    });
+    const delivery = dispatch.order.delivery;
+    if (delivery === null) {
+      throw new Error("Expected provider delivery");
+    }
+
+    const attempts = new PostgresEnergyProviderAttemptJournal(
+      resource.db,
+    );
+    const attempt = await attempts.getOrCreateCurrentAttempt({
+      idempotencyKey: delivery.idempotencyKey,
+      providerName: "tron-own-pool",
+    });
+
+    const now = Date.now();
+    const unsigned = unsignedDelegation(now);
+    const signer = new PostgresTronDelegationSigner(
+      resource.db,
+      SIGNER_OWNER,
+      SIGNER_PRIVATE_KEY,
+      () => now,
+    );
+
+    const signed = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        signer.sign({
+          attemptKey: attempt.attemptKey,
+          unsigned,
+        }),
+      ),
+    );
+
+    expect(new Set(signed.map((item) => item.txid))).toEqual(
+      new Set([unsigned.txid]),
+    );
+    expect(
+      new Set(
+        signed.map((item) =>
+          JSON.stringify(item.transaction.signature),
+        ),
+      ).size,
+    ).toBe(1);
+
+    const [stored] = await resource.db
+      .select({
+        signerUnsignedTxid:
+          providerTransactionAttempts.signerUnsignedTxid,
+        signerUnsignedDigest:
+          providerTransactionAttempts.signerUnsignedDigest,
+        signedTransaction:
+          providerTransactionAttempts.signedTransaction,
+        signedAt: providerTransactionAttempts.signedAt,
+      })
+      .from(providerTransactionAttempts)
+      .where(eq(providerTransactionAttempts.id, attempt.id))
+      .limit(1);
+
+    expect(stored?.signerUnsignedTxid).toBe(unsigned.txid);
+    expect(stored?.signerUnsignedDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored?.signedTransaction).toMatchObject({
+      txID: unsigned.txid,
+    });
+    expect(stored?.signedAt).toBeInstanceOf(Date);
+
+    const restartedSigner = new PostgresTronDelegationSigner(
+      resource.db,
+      SIGNER_OWNER,
+      SIGNER_PRIVATE_KEY,
+      () => now + 1_000,
+    );
+    await expect(
+      restartedSigner.findSignedByAttemptKey(attempt.attemptKey),
+    ).resolves.toEqual(signed[0]);
+
+    const tampered = structuredClone(unsigned);
+    const rawData = tampered.transaction.raw_data as {
+      contract: Array<{
+        parameter: { value: { balance: number } };
+      }>;
+    };
+    rawData.contract[0]!.parameter.value.balance = 2_000_000;
+
+    await expect(
+      signer.sign({
+        attemptKey: attempt.attemptKey,
+        unsigned: tampered,
+      }),
+    ).rejects.toThrow(/raw_data/);
+
+    const differentUnsigned = unsignedDelegation(
+      now + 1,
+      2_000_000,
+    );
+    await expect(
+      signer.sign({
+        attemptKey: attempt.attemptKey,
+        unsigned: differentUnsigned,
+      }),
+    ).rejects.toThrow("Signer attempt identity changed");
+
+    await attempts.claimAttemptTransaction({
+      attemptKey: attempt.attemptKey,
+      providerName: "tron-own-pool",
+      txid: unsigned.txid,
+      expirationAt: new Date(now + 60_000),
+    });
   });
 
 });

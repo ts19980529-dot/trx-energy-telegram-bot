@@ -1486,6 +1486,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "signer_unsigned_txid": {
+          "name": "signer_unsigned_txid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signer_unsigned_digest": {
+          "name": "signer_unsigned_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_at": {
+          "name": "signed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1532,6 +1556,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "provider_transaction_attempts_signer_unsigned_txid_unique": {
+          "name": "provider_transaction_attempts_signer_unsigned_txid_unique",
+          "columns": [
+            {
+              "expression": "signer_unsigned_txid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {},
+          "where": "\"provider_transaction_attempts\".\"signer_unsigned_txid\" is not null"
         }
       },
       "foreignKeys": {
@@ -1588,6 +1628,10 @@
         "provider_transaction_attempts_identity_check": {
           "name": "provider_transaction_attempts_identity_check",
           "value": "(\"provider_transaction_attempts\".\"status\" in ('created', 'failed') and \"provider_transaction_attempts\".\"txid\" is null and \"provider_transaction_attempts\".\"expiration_at\" is null) or (\"provider_transaction_attempts\".\"status\" <> 'created' and \"provider_transaction_attempts\".\"txid\" is not null and \"provider_transaction_attempts\".\"expiration_at\" is not null)"
+        },
+        "provider_transaction_attempts_signer_state_check": {
+          "name": "provider_transaction_attempts_signer_state_check",
+          "value": "(\"provider_transaction_attempts\".\"signer_unsigned_txid\" is null and \"provider_transaction_attempts\".\"signer_unsigned_digest\" is null and \"provider_transaction_attempts\".\"signed_transaction\" is null and \"provider_transaction_attempts\".\"signed_at\" is null) or (\"provider_transaction_attempts\".\"signer_unsigned_txid\" is not null and \"provider_transaction_attempts\".\"signer_unsigned_digest\" is not null and \"provider_transaction_attempts\".\"signed_transaction\" is not null and \"provider_transaction_attempts\".\"signed_at\" is not null)"
         }
       },
       "isRLSEnabled": false

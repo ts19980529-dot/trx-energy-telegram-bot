@@ -17,7 +17,8 @@
     "start": "node dist/runtime/start.js",
     "db:migrate": "node dist/runtime/migrate.js",
     "db:bootstrap": "node dist/runtime/bootstrap-catalog.js",
-    "db:prepare": "npm run db:migrate && npm run db:bootstrap"
+    "db:prepare": "npm run db:migrate && npm run db:bootstrap",
+    "start:signer": "node dist/runtime/signer-start.js"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

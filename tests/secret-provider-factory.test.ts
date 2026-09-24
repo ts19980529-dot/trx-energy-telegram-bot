@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSecretProvider,
   loadRuntimeSecrets,
+  loadSignerRuntimeSecrets,
 } from "../src/runtime/secret-provider.js";
 
 describe("createSecretProvider", () => {
@@ -57,6 +58,7 @@ describe("loadRuntimeSecrets", () => {
         },
         nodeEnv: "development",
         usdtEnabled: false,
+        energyEnabled: false,
       }),
     ).resolves.toEqual({
       botToken: "bot-token",
@@ -75,6 +77,7 @@ describe("loadRuntimeSecrets", () => {
         env: {},
         nodeEnv: "development",
         usdtEnabled: false,
+        energyEnabled: false,
       }),
     ).rejects.toThrow(/DATABASE_URL is not configured/);
   });
@@ -87,6 +90,7 @@ describe("loadRuntimeSecrets", () => {
         env: baseSecrets,
         nodeEnv: "production",
         usdtEnabled: true,
+        energyEnabled: false,
       }),
     ).rejects.toThrow(/TRON_API_KEY is not configured/);
   });
@@ -102,6 +106,7 @@ describe("loadRuntimeSecrets", () => {
         env: baseSecrets,
         nodeEnv: " production ",
         usdtEnabled: true,
+        energyEnabled: false,
       }),
     ).resolves.toEqual({
       botToken: "bot-token",
@@ -118,6 +123,7 @@ describe("loadRuntimeSecrets", () => {
         env: baseSecrets,
         nodeEnv: "development",
         usdtEnabled: true,
+        energyEnabled: false,
       }),
     ).resolves.toEqual({
       botToken: "bot-token",
@@ -133,10 +139,47 @@ describe("loadRuntimeSecrets", () => {
         env: baseSecrets,
         nodeEnv: "production",
         usdtEnabled: false,
+        energyEnabled: false,
       }),
     ).resolves.toEqual({
       botToken: "bot-token",
       databaseUrl: "postgresql://example.invalid/db",
     });
   });
+
+  it("requires signer auth when Energy delivery is enabled", async () => {
+    const provider = createSecretProvider("environment", {
+      BOT_TOKEN: "bot-token",
+      TRON_API_KEY: "tron-api-key",
+    });
+
+    await expect(
+      loadRuntimeSecrets(provider, {
+        env: {
+          DATABASE_URL: "postgresql://example.invalid/db",
+        },
+        nodeEnv: "production",
+        usdtEnabled: false,
+        energyEnabled: true,
+      }),
+    ).rejects.toThrow(/TRON_SIGNER_AUTH_TOKEN/);
+  });
+
+  it("loads only signer secrets for the independent signer runtime", async () => {
+    const provider = createSecretProvider("environment", {
+      TRON_SIGNER_PRIVATE_KEY: "private-key",
+      TRON_SIGNER_AUTH_TOKEN: "auth-token",
+    });
+
+    await expect(
+      loadSignerRuntimeSecrets(provider, {
+        DATABASE_URL: "postgresql://signer.invalid/db",
+      }),
+    ).resolves.toEqual({
+      databaseUrl: "postgresql://signer.invalid/db",
+      privateKey: "private-key",
+      authToken: "auth-token",
+    });
+  });
+
 });

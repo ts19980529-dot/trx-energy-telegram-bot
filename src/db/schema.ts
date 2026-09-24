@@ -5,6 +5,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -559,6 +560,10 @@ export const providerTransactionAttempts = pgTable(
     lastBroadcastResult: text("last_broadcast_result"),
     lastChainStatus: text("last_chain_status"),
     lastChainObservedAt: timestamp("last_chain_observed_at", { withTimezone: true }),
+    signerUnsignedTxid: text("signer_unsigned_txid"),
+    signerUnsignedDigest: text("signer_unsigned_digest"),
+    signedTransaction: jsonb("signed_transaction").$type<Record<string, unknown>>(),
+    signedAt: timestamp("signed_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -573,6 +578,9 @@ export const providerTransactionAttempts = pgTable(
       table.attemptKey,
     ),
     uniqueIndex("provider_transaction_attempts_txid_unique").on(table.txid),
+    uniqueIndex("provider_transaction_attempts_signer_unsigned_txid_unique")
+      .on(table.signerUnsignedTxid)
+      .where(sql`${table.signerUnsignedTxid} is not null`),
     uniqueIndex("provider_transaction_attempts_active_delivery_unique")
       .on(table.providerDeliveryId)
       .where(
@@ -597,6 +605,20 @@ export const providerTransactionAttempts = pgTable(
     check(
       "provider_transaction_attempts_identity_check",
       sql`(${table.status} in ('created', 'failed') and ${table.txid} is null and ${table.expirationAt} is null) or (${table.status} <> 'created' and ${table.txid} is not null and ${table.expirationAt} is not null)`,
+    ),
+    check(
+      "provider_transaction_attempts_signer_state_check",
+      sql`(
+        ${table.signerUnsignedTxid} is null
+        and ${table.signerUnsignedDigest} is null
+        and ${table.signedTransaction} is null
+        and ${table.signedAt} is null
+      ) or (
+        ${table.signerUnsignedTxid} is not null
+        and ${table.signerUnsignedDigest} is not null
+        and ${table.signedTransaction} is not null
+        and ${table.signedAt} is not null
+      )`,
     ),
   ],
 );
