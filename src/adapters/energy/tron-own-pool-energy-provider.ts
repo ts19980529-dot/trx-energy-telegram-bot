@@ -55,9 +55,9 @@ export interface TronSignedDelegation {
 
 export interface TronDelegationSigner {
   /**
-   * The signer boundary must durably bind idempotencyKey to the signed
-   * transaction before returning. Repeating the same key must return the
-   * exact same transaction identity instead of signing a replacement.
+   * The signer boundary must durably bind attemptKey to the signed
+   * transaction before returning. Repeating the same attemptKey must return
+   * the exact same transaction identity instead of signing a replacement.
    */
   sign(input: {
     readonly attemptKey: string;
@@ -65,9 +65,9 @@ export interface TronDelegationSigner {
   }): Promise<TronSignedDelegation>;
 
   /**
-   * Recovers the exact previously signed transaction after a Bot Core
-   * timeout/restart. This is required so a signed-but-not-yet-broadcast
-   * transaction can be safely rebroadcast without creating a second txID.
+   * Recovers the exact transaction durably bound to one attemptKey after a
+   * Bot Core timeout/restart. A replacement attempt uses a different key and
+   * can only be created after the prior attempt is proven expired and absent.
    */
   findSignedByAttemptKey(
     attemptKey: string,
