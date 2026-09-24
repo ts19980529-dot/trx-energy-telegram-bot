@@ -1,0 +1,40 @@
+name: Generate TronWeb lockfile
+
+on:
+  push:
+    branches:
+      - feat/production-energy-provider
+    paths:
+      - .github/workflows/tronweb-lockgen.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/production-energy-provider
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Generate pinned lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund --save-exact tronweb@6.5.1
+
+      - name: Commit generated dependency state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/tronweb-lockgen.yml
+          git add package.json package-lock.json
+          git commit -m "build: pin TronWeb signer dependency"
+          git push origin HEAD:feat/production-energy-provider
