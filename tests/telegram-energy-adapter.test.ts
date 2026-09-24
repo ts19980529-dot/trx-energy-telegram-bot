@@ -103,6 +103,64 @@ function services(overrides: Partial<TelegramBotServices>): TelegramBotServices 
 }
 
 describe("Telegram Energy adapter", () => {
+  it("reports address-like invalid input through the validator", async () => {
+    const calls: string[] = [];
+    const prepareInputs: unknown[] = [];
+    const bot = createTelegramBot(
+      "123456:TEST_TOKEN",
+      services({
+        energyUsage: {
+          async prepare(input) {
+            prepareInputs.push(input);
+            return { kind: "invalid_address" };
+          },
+          async execute() { return { kind: "option_unavailable" }; },
+          async getStatus() { return { kind: "not_found" }; },
+        },
+      }),
+      { botInfo: botInfo(), client: { fetch: mockFetch(calls) } },
+    );
+
+    const malformed = "T0" + recipient.slice(2);
+    await bot.handleUpdate({
+      update_id: 91,
+      message: {
+        message_id: 91,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: malformed,
+      },
+    });
+
+    expect(prepareInputs).toEqual([
+      { telegramUserId: 42n, recipientAddress: malformed },
+    ]);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+  });
+
+  it("responds when a direct address arrives before a supplier is enabled", async () => {
+    const calls: string[] = [];
+    const bot = createTelegramBot(
+      "123456:TEST_TOKEN",
+      services({}),
+      { botInfo: botInfo(), client: { fetch: mockFetch(calls) } },
+    );
+
+    await bot.handleUpdate({
+      update_id: 92,
+      message: {
+        message_id: 92,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: recipient,
+      },
+    });
+
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+  });
+
   it("turns a valid TRON address into configured Energy options", async () => {
     const calls: string[] = [];
     const prepareInputs: unknown[] = [];
