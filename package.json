@@ -22,7 +22,8 @@
   "dependencies": {
     "drizzle-orm": "0.45.2",
     "grammy": "1.45.1",
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "tronweb": "6.5.1"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
