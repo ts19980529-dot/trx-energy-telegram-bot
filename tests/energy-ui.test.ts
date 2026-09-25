@@ -27,6 +27,16 @@ describe("Telegram Energy UI", () => {
     expect(
       buildMainMenuKeyboard(false, false).inline_keyboard.flat().map((button) => button.text),
     ).toEqual(["查看笔数套餐"]);
+    expect(
+      buildMainMenuKeyboard(false, false, true, true)
+        .inline_keyboard
+        .flat()
+        .map((button) => button.text),
+    ).toEqual([
+      "我的能量订单",
+      "查看笔数套餐",
+      "我的支付订单",
+    ]);
   });
 
   it("builds callback-safe Energy selections within Telegram's 64-byte limit", () => {

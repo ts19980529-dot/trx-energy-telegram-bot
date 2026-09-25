@@ -811,6 +811,93 @@ describe("Telegram adapter", () => {
     expect(sentBodies[0]).not.toContain("internal database detail");
   });
 
+  it("restores recent purchase orders even when new payment ordering is disabled", async () => {
+    const calls: string[] = [];
+    const listInputs: unknown[] = [];
+    const getInputs: unknown[] = [];
+    const orderId = "22222222-2222-4222-8222-222222222229";
+    const order = {
+      id: orderId,
+      status: "waiting_payment" as const,
+      payment: {
+        packageCodeSnapshot: "demo",
+        countSnapshot: 10,
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAttributionOffsetAtomic: 137n,
+        paymentAsset: "USDT" as const,
+        paymentToAddressSnapshot: "TTEST_DESTINATION",
+        paymentTokenContractAddressSnapshot:
+          "TTEST_USDT_CONTRACT",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 17_000_137n,
+        quoteExpiresAt: new Date("2026-09-22T03:30:00.000Z"),
+      },
+      availableCount: 7,
+      updatedAt: new Date("2026-09-22T03:00:00.000Z"),
+    };
+
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: { async execute() { return { kind: "ready", packages: [] }; } },
+      packageSelection: {
+        async select() { return { kind: "unavailable" }; },
+      },
+      adminAccess: { async getRole() { return undefined; } },
+      purchaseOrderStatus: {
+        async listRecent(input) {
+          listInputs.push(input);
+          return { kind: "ready", orders: [order] };
+        },
+        async get(input) {
+          getInputs.push(input);
+          return { kind: "found", order };
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: { fetch: mockFetch(calls) },
+    });
+
+    await bot.handleUpdate({
+      update_id: 302,
+      callback_query: {
+        id: "purchase-orders-menu",
+        from: user(),
+        chat_instance: "instance-1",
+        data: "menu:purchase-orders",
+        message: {
+          message_id: 32,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(listInputs).toEqual([
+      { telegramUserId: 42n, limit: 5 },
+    ]);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+
+    await bot.handleUpdate({
+      update_id: 303,
+      callback_query: {
+        id: "purchase-restored-status",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `order:status:${orderId}`,
+        message: {
+          message_id: 33,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(getInputs).toEqual([
+      { orderId, telegramUserId: 42n },
+    ]);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
+  });
+
   it("refreshes an owned purchase order status using numeric Telegram identity", async () => {
     const calls: string[] = [];
     const statusInputs: unknown[] = [];

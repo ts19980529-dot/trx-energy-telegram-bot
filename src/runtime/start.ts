@@ -1,3 +1,4 @@
+import { EnergyOrderQueryService } from "../application/energy/energy-order-query-service.js";
 import { EnergyUsageService } from "../application/energy/energy-usage-service.js";
 import { EnergyReclaimService } from "../application/energy/energy-reclaim-service.js";
 import { EnergyDeliveryRecoveryService } from "../application/energy/energy-delivery-recovery-service.js";
@@ -157,6 +158,9 @@ async function main(): Promise<void> {
     let energyUsage: EnergyUsageService | undefined;
     let reclaimLoop: PaymentReconciliationLoop | undefined;
     const energyRepository = new PostgresEnergyUsageRepository(postgres.db);
+    const energyOrderQuery = new EnergyOrderQueryService(
+      energyRepository,
+    );
 
     if (config.tronEnergy !== undefined) {
       if (tronSignerAuthToken === undefined) {
@@ -309,11 +313,9 @@ async function main(): Promise<void> {
     }
 
     const purchaseOrderStatus =
-      purchaseOrderCreation === undefined
-        ? undefined
-        : new PurchaseOrderStatusService(
-            new PostgresPurchaseOrderStatusRepository(postgres.db),
-          );
+      new PurchaseOrderStatusService(
+        new PostgresPurchaseOrderStatusRepository(postgres.db),
+      );
     const telegramPurchaseOrderCreation =
       purchaseOrderCreation === undefined
         ? undefined
@@ -335,13 +337,12 @@ async function main(): Promise<void> {
       start: startService,
       packageSelection,
       adminAccess,
+      energyOrderQuery,
       ...(energyUsage === undefined ? {} : { energyUsage }),
       ...(telegramPurchaseOrderCreation === undefined
         ? {}
         : { purchaseOrderCreation: telegramPurchaseOrderCreation }),
-      ...(purchaseOrderStatus === undefined
-        ? {}
-        : { purchaseOrderStatus }),
+      purchaseOrderStatus,
     });
 
     startupPhase = "telegram_init";

@@ -6,6 +6,7 @@ import {
   type BotConfig,
 } from "grammy";
 
+import type { EnergyOrderQueryService } from "../../application/energy/energy-order-query-service.js";
 import type { EnergyUsageService } from "../../application/energy/energy-usage-service.js";
 import type { PurchaseOrderCreationService } from "../../application/payments/purchase-order-service.js";
 import type { PurchaseOrderStatusService } from "../../application/payments/purchase-order-status-service.js";
@@ -25,6 +26,7 @@ import {
   isEnergyOrdersMenuCallback,
   isHomeMenuCallback,
   isPackageMenuCallback,
+  isPurchaseOrdersMenuCallback,
   parseEnergyConfirmCallbackData,
   parseEnergyExecuteCallbackData,
   parseEnergyStatusCallbackData,
@@ -34,6 +36,7 @@ import {
   adminRoleLabel,
   buildOrderStatusKeyboard,
   buildPackageKeyboard,
+  buildPurchaseOrderListKeyboard,
   buildPaymentMethodKeyboard,
   formatPurchaseOrderInstructions,
   formatPurchaseOrderStatus,
@@ -67,9 +70,12 @@ export interface TelegramBotServices {
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
   readonly energyUsage?: Pick<
     EnergyUsageService,
-    "prepare" | "execute" | "getStatus"
-  > &
-    Partial<Pick<EnergyUsageService, "listRecent">>;
+    "prepare" | "execute"
+  >;
+  readonly energyOrderQuery?: Pick<
+    EnergyOrderQueryService,
+    "listRecent" | "get"
+  >;
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
     "create"
@@ -79,7 +85,8 @@ export interface TelegramBotServices {
   readonly purchaseOrderStatus?: Pick<
     PurchaseOrderStatusService,
     "get"
-  >;
+  > &
+    Partial<Pick<PurchaseOrderStatusService, "listRecent">>;
 }
 
 export function createTelegramBot(
@@ -142,13 +149,22 @@ export function createTelegramBot(
       return;
     }
 
-    if (result.packages.length === 0 && services.energyUsage === undefined) {
+    const energyEnabled = services.energyUsage !== undefined;
+    const purchaseEnabled = purchaseOrderCreationAvailable();
+    const energyHistoryEnabled =
+      services.energyOrderQuery !== undefined;
+    const purchaseHistoryEnabled =
+      services.purchaseOrderStatus?.listRecent !== undefined;
+
+    if (
+      result.packages.length === 0 &&
+      !energyEnabled &&
+      !energyHistoryEnabled &&
+      !purchaseHistoryEnabled
+    ) {
       await ctx.reply("当前暂无可用服务，请稍后再试。");
       return;
     }
-
-    const energyEnabled = services.energyUsage !== undefined;
-    const purchaseEnabled = purchaseOrderCreationAvailable();
 
     await ctx.reply(
       energyEnabled
@@ -160,6 +176,8 @@ export function createTelegramBot(
         reply_markup: buildMainMenuKeyboard(
           energyEnabled,
           purchaseEnabled,
+          energyHistoryEnabled,
+          purchaseHistoryEnabled,
         ),
       },
     );
@@ -225,10 +243,7 @@ export function createTelegramBot(
       return;
     }
 
-    if (
-      services.energyUsage === undefined ||
-      services.energyUsage.listRecent === undefined
-    ) {
+    if (services.energyOrderQuery === undefined) {
       await ctx.answerCallbackQuery({
         text: "能量订单查询暂不可用。",
         show_alert: true,
@@ -238,7 +253,7 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
 
-    const result = await services.energyUsage.listRecent({
+    const result = await services.energyOrderQuery.listRecent({
       telegramUserId: BigInt(ctx.from.id),
       limit: 5,
     });
@@ -257,6 +272,46 @@ export function createTelegramBot(
 
     await ctx.reply("最近能量订单：", {
       reply_markup: buildEnergyOrderListKeyboard(result.orders),
+    });
+  });
+
+  handlers.callbackQuery("menu:purchase-orders", async (ctx) => {
+    if (!isPurchaseOrdersMenuCallback(ctx.callbackQuery.data)) {
+      return;
+    }
+
+    if (
+      services.purchaseOrderStatus === undefined ||
+      services.purchaseOrderStatus.listRecent === undefined
+    ) {
+      await ctx.answerCallbackQuery({
+        text: "支付订单查询暂不可用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const result = await services.purchaseOrderStatus.listRecent({
+      telegramUserId: BigInt(ctx.from.id),
+      limit: 5,
+    });
+
+    if (result.kind === "denied") {
+      await ctx.reply("账号当前不可用。");
+      return;
+    }
+
+    if (result.orders.length === 0) {
+      await ctx.reply("暂无支付订单。", {
+        reply_markup: buildHomeKeyboard(),
+      });
+      return;
+    }
+
+    await ctx.reply("最近支付订单：", {
+      reply_markup: buildPurchaseOrderListKeyboard(result.orders),
     });
   });
 
@@ -510,9 +565,9 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.energyUsage === undefined) {
+    if (services.energyOrderQuery === undefined) {
       await ctx.answerCallbackQuery({
-        text: "当前能量服务尚未启用。",
+        text: "能量订单查询暂不可用。",
         show_alert: true,
       });
       return;
@@ -520,7 +575,7 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
 
-    const result = await services.energyUsage.getStatus({
+    const result = await services.energyOrderQuery.get({
       orderId,
       telegramUserId: BigInt(ctx.from.id),
     });
@@ -530,20 +585,16 @@ export function createTelegramBot(
       return;
     }
 
-    if (
-      result.kind !== "completed" &&
-      result.kind !== "released" &&
-      result.kind !== "processing"
-    ) {
-      await ctx.reply("当前无法查询能量订单状态。");
-      return;
-    }
+    const refreshable =
+      result.order.status !== "completed" &&
+      result.order.status !== "released" &&
+      result.order.status !== "cancelled";
 
     try {
       await ctx.editMessageText(formatEnergyOrder(result.order), {
         reply_markup: buildEnergyStatusKeyboard(
           result.order.id,
-          result.kind === "processing",
+          refreshable,
         ),
       });
     } catch (error) {

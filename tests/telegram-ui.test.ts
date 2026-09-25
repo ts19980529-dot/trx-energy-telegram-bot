@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   adminRoleLabel,
+  buildOrderStatusKeyboard,
   buildPaymentMethodKeyboard,
+  buildPurchaseOrderListKeyboard,
   formatPurchaseOrderInstructions,
   formatPurchaseOrderStatus,
   formatUsdtMicros,
@@ -86,6 +88,49 @@ describe("Telegram package UI", () => {
         },
       }),
     ).toContain("应付金额：4.250137 USDT");
+  });
+
+  it("builds purchase-order recovery navigation", () => {
+    const orderId = "22222222-2222-4222-8222-222222222222";
+    const order = {
+      id: orderId,
+      status: "waiting_payment" as const,
+      payment: {
+        packageCodeSnapshot: "demo",
+        countSnapshot: 10,
+        priceUsdtMicrosSnapshot: 17_000_000n,
+        paymentAttributionOffsetAtomic: 137n,
+        paymentAsset: "USDT" as const,
+        paymentToAddressSnapshot: "TTEST_DESTINATION",
+        paymentTokenContractAddressSnapshot: "TTEST_USDT",
+        requiredConfirmationsSnapshot: 2,
+        quotedAmountAtomic: 17_000_137n,
+        quoteExpiresAt: new Date("2026-09-22T03:00:00.000Z"),
+      },
+      availableCount: 0,
+      updatedAt: new Date("2026-09-22T02:50:00.000Z"),
+    };
+
+    expect(
+      buildPurchaseOrderListKeyboard([order])
+        .inline_keyboard
+        .flat()
+        .map((button) => button.text),
+    ).toEqual([
+      "10 笔 · 等待付款",
+      "返回主菜单",
+    ]);
+
+    expect(
+      buildOrderStatusKeyboard(orderId, true)
+        .inline_keyboard
+        .flat()
+        .map((button) => button.text),
+    ).toEqual([
+      "刷新订单状态",
+      "我的支付订单",
+      "返回主菜单",
+    ]);
   });
 
   it("builds and parses owned order status callback data", () => {

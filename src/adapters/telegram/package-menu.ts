@@ -9,6 +9,8 @@ import type { PaymentAsset } from "../../core/payments/payment-observation.js";
 const PACKAGE_CALLBACK_PREFIX = "package:view:";
 const PACKAGE_PAYMENT_CALLBACK_PREFIX = "package:pay:";
 const ORDER_STATUS_CALLBACK_PREFIX = "order:status:";
+const PURCHASE_ORDERS_MENU_CALLBACK = "menu:purchase-orders";
+const HOME_MENU_CALLBACK = "menu:home";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -128,6 +130,23 @@ export function parseOrderStatusCallbackData(
   return UUID_PATTERN.test(id) ? id : undefined;
 }
 
+export function buildPurchaseOrderListKeyboard(
+  orders: readonly PurchaseOrderStatusView[],
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  for (const order of orders) {
+    keyboard
+      .text(
+        `${order.payment.countSnapshot} 笔 · ${purchaseOrderStatusLabel(order.status)}`,
+        orderStatusCallbackData(order.id),
+      )
+      .row();
+  }
+
+  return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
+}
+
 export function buildOrderStatusKeyboard(
   orderId: string,
   refreshable = true,
@@ -135,13 +154,18 @@ export function buildOrderStatusKeyboard(
   const keyboard = new InlineKeyboard();
 
   if (refreshable) {
-    keyboard.text(
-      "刷新订单状态",
-      orderStatusCallbackData(orderId),
-    );
+    keyboard
+      .text(
+        "刷新订单状态",
+        orderStatusCallbackData(orderId),
+      )
+      .row();
   }
 
-  return keyboard;
+  return keyboard
+    .text("我的支付订单", PURCHASE_ORDERS_MENU_CALLBACK)
+    .row()
+    .text("返回主菜单", HOME_MENU_CALLBACK);
 }
 
 export function buildPaymentMethodKeyboard(
@@ -193,7 +217,7 @@ export function formatPurchaseOrderInstructions(
   ].join("\n");
 }
 
-function purchaseOrderStatusLabel(
+export function purchaseOrderStatusLabel(
   status: PurchaseOrderStatusView["status"],
 ): string {
   switch (status) {
