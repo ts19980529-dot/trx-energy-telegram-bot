@@ -650,6 +650,11 @@ export function createTelegramBot(
     });
 
     switch (result.kind) {
+      case "service_unavailable":
+        await ctx.reply(
+          "支付服务当前不可用，暂时不会创建新的支付订单。已有订单仍可查询状态。",
+        );
+        return;
       case "ready":
         await ctx.reply(
           formatPurchaseOrderInstructions(result.order),
