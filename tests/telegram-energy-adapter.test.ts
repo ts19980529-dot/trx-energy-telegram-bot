@@ -216,6 +216,97 @@ describe("Telegram Energy adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
+  it("restores recent owned Energy orders and reopens their status", async () => {
+    const calls: string[] = [];
+    const listInputs: unknown[] = [];
+    const statusInputs: unknown[] = [];
+    const orderId = "22222222-2222-4222-8222-222222222229";
+    const order = {
+      id: orderId,
+      userId: "33333333-3333-4333-8333-333333333339",
+      optionCode: "energy_65k",
+      recipientAddress: recipient,
+      energyAmount: 65_000n,
+      countCost: 1,
+      status: "completed" as const,
+      availableCount: 9,
+      reservedCount: 0,
+      delivery: {
+        id: "44444444-4444-4444-8444-444444444449",
+        idempotencyKey: `energy-delivery:${orderId}`,
+        providerName: "fake-energy",
+        providerOrderId: "provider-restore-1",
+        status: "completed" as const,
+      },
+    };
+
+    const bot = createTelegramBot(
+      "123456:TEST_TOKEN",
+      services({
+        energyUsage: {
+          async prepare() {
+            return { kind: "invalid_address" };
+          },
+          async execute() {
+            return { kind: "option_unavailable" };
+          },
+          async listRecent(input) {
+            listInputs.push(input);
+            return { kind: "ready", orders: [order] };
+          },
+          async getStatus(input) {
+            statusInputs.push(input);
+            return { kind: "completed", order };
+          },
+        },
+      }),
+      {
+        botInfo: botInfo(),
+        client: { fetch: mockFetch(calls) },
+      },
+    );
+
+    await bot.handleUpdate({
+      update_id: 13,
+      callback_query: {
+        id: "energy-orders-menu",
+        from: user(),
+        chat_instance: "instance-1",
+        data: "menu:energy-orders",
+        message: {
+          message_id: 13,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(listInputs).toEqual([
+      { telegramUserId: 42n, limit: 5 },
+    ]);
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+
+    await bot.handleUpdate({
+      update_id: 14,
+      callback_query: {
+        id: "energy-restored-status",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `energy:status:${orderId}`,
+        message: {
+          message_id: 14,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(statusInputs).toEqual([
+      { orderId, telegramUserId: 42n },
+    ]);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
+  });
+
   it("uses one Energy action identity across repeated button presses", async () => {
     const calls: string[] = [];
     const executeInputs: unknown[] = [];

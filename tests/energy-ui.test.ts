@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildEnergyOptionKeyboard,
+  buildEnergyOrderListKeyboard,
   buildMainMenuKeyboard,
   energyStatusCallbackData,
   energyUseCallbackData,
@@ -19,7 +20,7 @@ describe("Telegram Energy UI", () => {
       .flat()
       .map((button) => button.text);
 
-    expect(labels).toEqual(["使用能量", "购买笔数"]);
+    expect(labels).toEqual(["使用能量", "我的能量订单", "购买笔数"]);
     expect(
       buildMainMenuKeyboard(false, true).inline_keyboard.flat().map((button) => button.text),
     ).toEqual(["购买笔数"]);
@@ -62,7 +63,36 @@ describe("Telegram Energy UI", () => {
     ).toEqual([
       "65K Energy · 1 笔",
       "131K Energy · 1 笔",
+      "返回主菜单",
     ]);
+  });
+
+  it("builds a recoverable recent-order menu from owned Energy orders", () => {
+    const keyboard = buildEnergyOrderListKeyboard([
+      {
+        id: orderId,
+        userId: "33333333-3333-4333-8333-333333333333",
+        optionCode: "energy_65k",
+        recipientAddress: recipient,
+        energyAmount: 65_000n,
+        countCost: 1,
+        status: "dispatching",
+        availableCount: 9,
+        reservedCount: 1,
+        delivery: null,
+      },
+    ]);
+
+    const buttons = keyboard.inline_keyboard.flat();
+    expect(buttons.map((button) => button.text)).toEqual([
+      "65K · 投递中",
+      "返回主菜单",
+    ]);
+    expect(
+      buttons[0] && "callback_data" in buttons[0]
+        ? buttons[0].callback_data
+        : undefined,
+    ).toBe(`energy:status:${orderId}`);
   });
 
   it("builds stable Energy status callbacks and terminal order text", () => {

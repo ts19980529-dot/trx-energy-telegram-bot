@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import type {
   EnergyConsumptionSnapshot,
@@ -137,6 +137,82 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       .orderBy(asc(energyConsumptionOrders.idempotencyKey))
       .limit(limit);
     return rows;
+  }
+
+  async listOwned(
+    telegramUserId: bigint,
+    limit: number,
+  ): Promise<
+    | { readonly kind: "denied" }
+    | {
+        readonly kind: "ready";
+        readonly orders: readonly EnergyConsumptionSnapshot[];
+      }
+  > {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+      throw new Error("Energy owned-order limit must be between 1 and 10");
+    }
+
+    const [user] = await this.db
+      .select({ id: users.id, status: users.status })
+      .from(users)
+      .where(eq(users.telegramUserId, telegramUserId))
+      .limit(1);
+
+    if (user === undefined || user.status === "blocked") {
+      return { kind: "denied" };
+    }
+
+    const [balance] = await this.db
+      .select()
+      .from(packageBalances)
+      .where(eq(packageBalances.userId, user.id))
+      .limit(1);
+
+    if (balance === undefined) {
+      throw new Error("Active Energy customer is missing package balance");
+    }
+
+    const orders = await this.db
+      .select()
+      .from(energyConsumptionOrders)
+      .where(eq(energyConsumptionOrders.userId, user.id))
+      .orderBy(
+        desc(energyConsumptionOrders.createdAt),
+        desc(energyConsumptionOrders.id),
+      )
+      .limit(limit);
+
+    if (orders.length === 0) {
+      return { kind: "ready", orders: [] };
+    }
+
+    const deliveries = await this.db
+      .select()
+      .from(providerDeliveries)
+      .where(
+        inArray(
+          providerDeliveries.energyConsumptionOrderId,
+          orders.map((order) => order.id),
+        ),
+      );
+    const deliveryByOrderId = new Map(
+      deliveries.map((delivery) => [
+        delivery.energyConsumptionOrderId,
+        delivery,
+      ]),
+    );
+
+    return {
+      kind: "ready",
+      orders: orders.map((order) =>
+        toOrderSnapshot({
+          order,
+          balance,
+          delivery: deliveryByOrderId.get(order.id),
+        }),
+      ),
+    };
   }
 
   async prepare(telegramUserId: bigint): Promise<EnergyPreparationResult> {

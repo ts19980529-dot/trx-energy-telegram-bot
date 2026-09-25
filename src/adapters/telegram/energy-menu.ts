@@ -5,7 +5,9 @@ import type {
   EnergyOptionSummary,
 } from "../../application/energy/energy-usage-service.js";
 
+const HOME_MENU_CALLBACK = "menu:home";
 const ENERGY_MENU_CALLBACK = "menu:energy";
+const ENERGY_ORDERS_MENU_CALLBACK = "menu:energy-orders";
 const PACKAGE_MENU_CALLBACK = "menu:packages";
 const ENERGY_CONFIRM_PREFIX = "energy:cf:";
 const ENERGY_EXECUTE_PREFIX = "energy:go:";
@@ -28,7 +30,11 @@ export function buildMainMenuKeyboard(
   const keyboard = new InlineKeyboard();
 
   if (energyEnabled) {
-    keyboard.text("使用能量", ENERGY_MENU_CALLBACK).row();
+    keyboard
+      .text("使用能量", ENERGY_MENU_CALLBACK)
+      .row()
+      .text("我的能量订单", ENERGY_ORDERS_MENU_CALLBACK)
+      .row();
   }
 
   return keyboard.text(
@@ -37,8 +43,16 @@ export function buildMainMenuKeyboard(
   );
 }
 
+export function isHomeMenuCallback(data: string): boolean {
+  return data === HOME_MENU_CALLBACK;
+}
+
 export function isEnergyMenuCallback(data: string): boolean {
   return data === ENERGY_MENU_CALLBACK;
+}
+
+export function isEnergyOrdersMenuCallback(data: string): boolean {
+  return data === ENERGY_ORDERS_MENU_CALLBACK;
 }
 
 export function isPackageMenuCallback(data: string): boolean {
@@ -152,6 +166,10 @@ function formatEnergyAmount(amount: bigint): string {
     : amount.toLocaleString("en-US");
 }
 
+export function buildHomeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("返回主菜单", HOME_MENU_CALLBACK);
+}
+
 export function buildEnergyOptionKeyboard(
   options: readonly EnergyOptionSummary[],
   recipientAddress: string,
@@ -167,7 +185,7 @@ export function buildEnergyOptionKeyboard(
       .row();
   }
 
-  return keyboard;
+  return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
 }
 
 export function buildEnergyConfirmationKeyboard(
@@ -217,6 +235,43 @@ export function parseEnergyStatusCallbackData(
   return UUID_PATTERN.test(orderId) ? orderId : undefined;
 }
 
+export function energyOrderStatusLabel(
+  status: EnergyConsumptionSnapshot["status"],
+): string {
+  switch (status) {
+    case "created":
+    case "reserved":
+      return "等待投递";
+    case "dispatching":
+      return "投递中";
+    case "completed":
+      return "已到账";
+    case "delivery_failed":
+      return "释放中";
+    case "released":
+      return "已退回";
+    case "cancelled":
+      return "已取消";
+  }
+}
+
+export function buildEnergyOrderListKeyboard(
+  orders: readonly EnergyConsumptionSnapshot[],
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  for (const order of orders) {
+    keyboard
+      .text(
+        `${formatEnergyAmount(order.energyAmount)} · ${energyOrderStatusLabel(order.status)}`,
+        energyStatusCallbackData(order.id),
+      )
+      .row();
+  }
+
+  return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
+}
+
 export function buildEnergyStatusKeyboard(
   orderId: string,
   refreshable: boolean,
@@ -224,30 +279,17 @@ export function buildEnergyStatusKeyboard(
   const keyboard = new InlineKeyboard();
 
   if (refreshable) {
-    keyboard.text("刷新能量订单", energyStatusCallbackData(orderId));
+    keyboard.text("刷新能量订单", energyStatusCallbackData(orderId)).row();
   }
 
-  return keyboard;
+  return keyboard
+    .text("我的能量订单", ENERGY_ORDERS_MENU_CALLBACK)
+    .row()
+    .text("返回主菜单", HOME_MENU_CALLBACK);
 }
 
 export function formatEnergyOrder(order: EnergyConsumptionSnapshot): string {
-  const status = (() => {
-    switch (order.status) {
-      case "created":
-      case "reserved":
-        return "已创建，等待投递";
-      case "dispatching":
-        return "能量投递中";
-      case "completed":
-        return "能量已到账";
-      case "delivery_failed":
-        return "投递失败，正在释放笔数";
-      case "released":
-        return "投递失败，笔数已退回";
-      case "cancelled":
-        return "已取消";
-    }
-  })();
+  const status = energyOrderStatusLabel(order.status);
 
   return [
     "能量订单",

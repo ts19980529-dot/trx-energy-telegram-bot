@@ -15,11 +15,15 @@ import type { TelegramStartService } from "../../application/telegram/start-serv
 import {
   buildEnergyConfirmationKeyboard,
   buildEnergyOptionKeyboard,
+  buildEnergyOrderListKeyboard,
   buildEnergyStatusKeyboard,
+  buildHomeKeyboard,
   buildMainMenuKeyboard,
   formatEnergyConfirmation,
   formatEnergyOrder,
   isEnergyMenuCallback,
+  isEnergyOrdersMenuCallback,
+  isHomeMenuCallback,
   isPackageMenuCallback,
   parseEnergyConfirmCallbackData,
   parseEnergyExecuteCallbackData,
@@ -61,7 +65,11 @@ export interface TelegramBotServices {
   readonly start: Pick<TelegramStartService, "execute">;
   readonly packageSelection: Pick<PackageSelectionService, "select">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
-  readonly energyUsage?: Pick<EnergyUsageService, "prepare" | "execute" | "getStatus">;
+  readonly energyUsage?: Pick<
+    EnergyUsageService,
+    "prepare" | "execute" | "getStatus"
+  > &
+    Partial<Pick<EnergyUsageService, "listRecent">>;
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
     "create"
@@ -114,7 +122,7 @@ export function createTelegramBot(
     }
   });
 
-  handlers.command("start", async (ctx) => {
+  const showMainMenu = async (ctx: Context): Promise<void> => {
     if (ctx.from === undefined) {
       return;
     }
@@ -151,6 +159,17 @@ export function createTelegramBot(
         ),
       },
     );
+  };
+
+  handlers.command("start", showMainMenu);
+
+  handlers.callbackQuery("menu:home", async (ctx) => {
+    if (!isHomeMenuCallback(ctx.callbackQuery.data)) {
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+    await showMainMenu(ctx);
   });
 
   handlers.callbackQuery("menu:packages", async (ctx) => {
@@ -192,7 +211,49 @@ export function createTelegramBot(
       return;
     }
 
-    await ctx.reply("请发送需要接收能量的 TRON 地址。");
+    await ctx.reply("请发送需要接收能量的 TRON 地址。", {
+      reply_markup: buildHomeKeyboard(),
+    });
+  });
+
+  handlers.callbackQuery("menu:energy-orders", async (ctx) => {
+    if (!isEnergyOrdersMenuCallback(ctx.callbackQuery.data)) {
+      return;
+    }
+
+    if (
+      services.energyUsage === undefined ||
+      services.energyUsage.listRecent === undefined
+    ) {
+      await ctx.answerCallbackQuery({
+        text: "能量订单查询暂不可用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const result = await services.energyUsage.listRecent({
+      telegramUserId: BigInt(ctx.from.id),
+      limit: 5,
+    });
+
+    if (result.kind === "denied") {
+      await ctx.reply("账号当前不可用。");
+      return;
+    }
+
+    if (result.orders.length === 0) {
+      await ctx.reply("暂无能量订单。", {
+        reply_markup: buildHomeKeyboard(),
+      });
+      return;
+    }
+
+    await ctx.reply("最近能量订单：", {
+      reply_markup: buildEnergyOrderListKeyboard(result.orders),
+    });
   });
 
   handlers.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
@@ -419,7 +480,8 @@ export function createTelegramBot(
 
     try {
       await ctx.editMessageText(
-        "已取消本次能量操作。未提交能量订单，也不会扣除笔数。发送 /start 可重新开始。",
+        "已取消本次能量操作。未提交能量订单，也不会扣除笔数。",
+        { reply_markup: buildHomeKeyboard() },
       );
     } catch (error) {
       if (
