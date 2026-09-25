@@ -31,9 +31,9 @@ Therefore the schema supports `payment_asset = TRX` and stores the resulting `qu
 
 ## Payment idempotency
 
-For top-level TRX payments, `txid` is unique because the transaction itself is the payment identity. For TRC-20 payments, one transaction may emit multiple `Transfer` events, so the business identity is the token contract address + `txid` + normalized event position (`event_index`). Two distinct TRC-20 events in the same transaction may therefore be recorded separately, while rescanning the same event remains idempotent.
+For this bot, `txid` is the global payment identity for both TRX and TRC-20. TRON may expose multiple contract events inside one transaction, but this product intentionally accepts at most one payment record per TXID. `event_index` remains evidence metadata for TRC-20 validation and replay comparison; it does not create a second payable identity.
 
-TRC-20 records require a non-negative event position. Top-level TRX records must not carry an event position. A partial unique index also permits at most one `confirmed` payment for the same purchase order. Extra or late transfers may still be recorded for reconciliation, but they cannot become a second confirmed payment for that order.
+TRC-20 records require a non-negative event position. Top-level TRX records must not carry an event position. A global unique TXID constraint prevents another TRX or TRC-20 payment row from reusing the same chain transaction, and a partial unique index additionally permits at most one `confirmed` payment for the same purchase order.
 
 Package crediting is protected again at the ledger layer: both the purchase order and the payment transaction may appear only once in a `purchase_credit` ledger entry.
 
