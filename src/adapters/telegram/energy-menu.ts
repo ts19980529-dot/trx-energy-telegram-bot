@@ -7,7 +7,10 @@ import type {
 
 const ENERGY_MENU_CALLBACK = "menu:energy";
 const PACKAGE_MENU_CALLBACK = "menu:packages";
-const ENERGY_USE_PREFIX = "energy:use:";
+const ENERGY_CONFIRM_PREFIX = "energy:cf:";
+const ENERGY_EXECUTE_PREFIX = "energy:go:";
+const ENERGY_LEGACY_USE_PREFIX = "energy:use:";
+const ENERGY_CANCEL_CALLBACK = "energy:cancel";
 const ENERGY_STATUS_PREFIX = "energy:status:";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -42,7 +45,8 @@ export function isPackageMenuCallback(data: string): boolean {
   return data === PACKAGE_MENU_CALLBACK;
 }
 
-export function energyUseCallbackData(
+function energySelectionCallbackData(
+  prefix: string,
   optionCode: string,
   recipientAddress: string,
 ): string {
@@ -50,7 +54,11 @@ export function energyUseCallbackData(
     throw new Error("Energy option code is not callback-safe");
   }
 
-  const value = `${ENERGY_USE_PREFIX}${optionCode}:${recipientAddress}`;
+  if (recipientAddress.length === 0) {
+    throw new Error("Energy recipient address is empty");
+  }
+
+  const value = `${prefix}${optionCode}:${recipientAddress}`;
 
   if (Buffer.byteLength(value, "utf8") > 64) {
     throw new Error("Energy callback exceeds Telegram 64-byte limit");
@@ -59,14 +67,15 @@ export function energyUseCallbackData(
   return value;
 }
 
-export function parseEnergyUseCallbackData(
+function parseEnergySelectionCallbackData(
   data: string,
+  prefix: string,
 ): EnergyUseSelection | undefined {
-  if (!data.startsWith(ENERGY_USE_PREFIX)) {
+  if (!data.startsWith(prefix)) {
     return undefined;
   }
 
-  const payload = data.slice(ENERGY_USE_PREFIX.length);
+  const payload = data.slice(prefix.length);
   const separator = payload.indexOf(":");
 
   if (separator <= 0) {
@@ -86,6 +95,57 @@ export function parseEnergyUseCallbackData(
   return { optionCode, recipientAddress };
 }
 
+export function energyConfirmCallbackData(
+  optionCode: string,
+  recipientAddress: string,
+): string {
+  return energySelectionCallbackData(
+    ENERGY_CONFIRM_PREFIX,
+    optionCode,
+    recipientAddress,
+  );
+}
+
+export function parseEnergyConfirmCallbackData(
+  data: string,
+): EnergyUseSelection | undefined {
+  return parseEnergySelectionCallbackData(data, ENERGY_CONFIRM_PREFIX);
+}
+
+export function energyExecuteCallbackData(
+  optionCode: string,
+  recipientAddress: string,
+): string {
+  return energySelectionCallbackData(
+    ENERGY_EXECUTE_PREFIX,
+    optionCode,
+    recipientAddress,
+  );
+}
+
+export function parseEnergyExecuteCallbackData(
+  data: string,
+): EnergyUseSelection | undefined {
+  return parseEnergySelectionCallbackData(data, ENERGY_EXECUTE_PREFIX);
+}
+
+export function energyUseCallbackData(
+  optionCode: string,
+  recipientAddress: string,
+): string {
+  return energySelectionCallbackData(
+    ENERGY_LEGACY_USE_PREFIX,
+    optionCode,
+    recipientAddress,
+  );
+}
+
+export function parseEnergyUseCallbackData(
+  data: string,
+): EnergyUseSelection | undefined {
+  return parseEnergySelectionCallbackData(data, ENERGY_LEGACY_USE_PREFIX);
+}
+
 function formatEnergyAmount(amount: bigint): string {
   return amount % 1_000n === 0n
     ? `${amount / 1_000n}K`
@@ -102,12 +162,44 @@ export function buildEnergyOptionKeyboard(
     keyboard
       .text(
         `${formatEnergyAmount(option.energyAmount)} Energy · ${option.countCost} 笔`,
-        energyUseCallbackData(option.code, recipientAddress),
+        energyConfirmCallbackData(option.code, recipientAddress),
       )
       .row();
   }
 
   return keyboard;
+}
+
+export function buildEnergyConfirmationKeyboard(
+  optionCode: string,
+  recipientAddress: string,
+): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(
+      "确认使用",
+      energyExecuteCallbackData(optionCode, recipientAddress),
+    )
+    .row()
+    .text("取消", ENERGY_CANCEL_CALLBACK);
+}
+
+export function formatEnergyConfirmation(input: {
+  readonly recipientAddress: string;
+  readonly option: EnergyOptionSummary;
+  readonly availableCount: number;
+  readonly reservedCount: number;
+}): string {
+  return [
+    "确认使用能量",
+    "",
+    `接收地址：${input.recipientAddress}`,
+    `能量规格：${formatEnergyAmount(input.option.energyAmount)} Energy · ${input.option.countCost} 笔`,
+    `当前可用笔数：${input.availableCount} 笔`,
+    `当前预留笔数：${input.reservedCount} 笔`,
+    "",
+    `确认后将提交能量订单，并按规则预留/扣除 ${input.option.countCost} 笔。`,
+    "请确认接收地址和能量规格无误。",
+  ].join("\n");
 }
 
 export function energyStatusCallbackData(orderId: string): string {

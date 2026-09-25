@@ -13,12 +13,16 @@ import type { AdminAccessService } from "../../application/telegram/admin-access
 import type { PackageSelectionService } from "../../application/telegram/package-selection-service.js";
 import type { TelegramStartService } from "../../application/telegram/start-service.js";
 import {
+  buildEnergyConfirmationKeyboard,
   buildEnergyOptionKeyboard,
   buildEnergyStatusKeyboard,
   buildMainMenuKeyboard,
+  formatEnergyConfirmation,
   formatEnergyOrder,
   isEnergyMenuCallback,
   isPackageMenuCallback,
+  parseEnergyConfirmCallbackData,
+  parseEnergyExecuteCallbackData,
   parseEnergyStatusCallbackData,
   parseEnergyUseCallbackData,
 } from "./energy-menu.js";
@@ -244,8 +248,98 @@ export function createTelegramBot(
     }
   });
 
+  handlers.callbackQuery(/^energy:cf:/, async (ctx) => {
+    const selection = parseEnergyConfirmCallbackData(
+      ctx.callbackQuery.data,
+    );
+
+    if (selection === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "无效能量规格。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    if (services.energyUsage === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "当前能量服务尚未启用。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    const result = await services.energyUsage.prepare({
+      telegramUserId: BigInt(ctx.from.id),
+      recipientAddress: selection.recipientAddress,
+    });
+
+    switch (result.kind) {
+      case "denied":
+        await ctx.reply("账号当前不可用。");
+        return;
+      case "invalid_address":
+        await ctx.reply("TRON 地址无效，请重新发送。");
+        return;
+      case "ready": {
+        const option = result.options.find(
+          (item) => item.code === selection.optionCode,
+        );
+
+        if (option === undefined) {
+          await ctx.reply("该能量规格已下架或不存在。");
+          return;
+        }
+
+        if (result.availableCount < option.countCost) {
+          await ctx.reply(
+            `可用笔数不足：当前 ${result.availableCount} 笔，需要 ${option.countCost} 笔。请先购买笔数。`,
+          );
+          return;
+        }
+
+        await ctx.reply(
+          formatEnergyConfirmation({
+            recipientAddress: result.recipientAddress,
+            option,
+            availableCount: result.availableCount,
+            reservedCount: result.reservedCount,
+          }),
+          {
+            reply_markup: buildEnergyConfirmationKeyboard(
+              option.code,
+              result.recipientAddress,
+            ),
+          },
+        );
+        return;
+      }
+    }
+  });
+
   handlers.callbackQuery(/^energy:use:/, async (ctx) => {
     const selection = parseEnergyUseCallbackData(ctx.callbackQuery.data);
+
+    if (selection === undefined) {
+      await ctx.answerCallbackQuery({
+        text: "无效能量操作。",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({
+      text: "该能量操作已更新，请重新发送地址并选择能量规格。",
+      show_alert: true,
+    });
+  });
+
+  handlers.callbackQuery(/^energy:go:/, async (ctx) => {
+    const selection = parseEnergyExecuteCallbackData(
+      ctx.callbackQuery.data,
+    );
 
     if (selection === undefined) {
       await ctx.answerCallbackQuery({
@@ -317,6 +411,25 @@ export function createTelegramBot(
           ),
         });
         return;
+    }
+  });
+
+  handlers.callbackQuery("energy:cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    try {
+      await ctx.editMessageText(
+        "已取消本次能量操作。未提交能量订单，也不会扣除笔数。发送 /start 可重新开始。",
+      );
+    } catch (error) {
+      if (
+        error instanceof GrammyError &&
+        /message is not modified/i.test(error.description)
+      ) {
+        return;
+      }
+
+      throw error;
     }
   });
 
