@@ -79,6 +79,16 @@ export interface EnergyUsageRepository {
     idempotencyKey: string;
     providerName: string | null;
   }[]>;
+  listOwned(
+    telegramUserId: bigint,
+    limit: number,
+  ): Promise<
+    | { readonly kind: "denied" }
+    | {
+        readonly kind: "ready";
+        readonly orders: readonly EnergyConsumptionSnapshot[];
+      }
+  >;
   prepare(telegramUserId: bigint): Promise<EnergyPreparationResult>;
 
   reserve(input: {
@@ -119,6 +129,13 @@ export type PrepareEnergyUsageResult =
       readonly availableCount: number;
       readonly reservedCount: number;
       readonly options: readonly EnergyOptionSummary[];
+    };
+
+export type ListRecentEnergyUsageResult =
+  | { readonly kind: "denied" }
+  | {
+      readonly kind: "ready";
+      readonly orders: readonly EnergyConsumptionSnapshot[];
     };
 
 export type ExecuteEnergyUsageResult =
@@ -197,6 +214,18 @@ export class EnergyUsageService {
 
   canResumeDelivery(providerName: string | null): boolean {
     return providerName === null || this.providers.has(providerName);
+  }
+
+  async listRecent(input: {
+    readonly telegramUserId: bigint;
+    readonly limit?: number;
+  }): Promise<ListRecentEnergyUsageResult> {
+    const limit = input.limit ?? 5;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+      throw new Error("Energy recent-order limit must be between 1 and 10");
+    }
+
+    return this.repository.listOwned(input.telegramUserId, limit);
   }
 
   async prepare(input: {
