@@ -50,6 +50,13 @@
       "when": 1790223600000,
       "tag": "0006_delegation_reclaim_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790319600000,
+      "tag": "0007_global_payment_txid_once",
+      "breakpoints": true
     }
   ]
 }

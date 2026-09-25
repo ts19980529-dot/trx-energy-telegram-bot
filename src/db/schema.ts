@@ -250,13 +250,7 @@ export const paymentTransactions = pgTable(
       .notNull(),
   },
   (table) => [
-    index("payment_transactions_txid_idx").on(table.txid),
-    uniqueIndex("payment_transactions_trx_txid_unique")
-      .on(table.txid)
-      .where(sql`${table.asset} = 'TRX'`),
-    uniqueIndex("payment_transactions_trc20_event_unique")
-      .on(table.tokenContractAddress, table.txid, table.eventIndex)
-      .where(sql`${table.asset} = 'USDT'`),
+    uniqueIndex("payment_transactions_txid_unique").on(table.txid),
     index("payment_transactions_purchase_order_idx").on(table.purchaseOrderId),
     uniqueIndex("payment_transactions_confirmed_order_unique")
       .on(table.purchaseOrderId)

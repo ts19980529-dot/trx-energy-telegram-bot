@@ -106,22 +106,7 @@ function paymentSnapshot(
 }
 
 function identityWhere(observation: PaymentObservation) {
-  if (observation.asset === "TRX") {
-    return and(
-      eq(paymentTransactions.asset, "TRX"),
-      eq(paymentTransactions.txid, observation.txid),
-    );
-  }
-
-  return and(
-    eq(paymentTransactions.asset, "USDT"),
-    eq(
-      paymentTransactions.tokenContractAddress,
-      observation.tokenContractAddress,
-    ),
-    eq(paymentTransactions.txid, observation.txid),
-    eq(paymentTransactions.eventIndex, observation.eventIndex),
-  );
+  return eq(paymentTransactions.txid, observation.txid);
 }
 
 function sameOptionalBigint(
