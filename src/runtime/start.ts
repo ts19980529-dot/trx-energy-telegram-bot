@@ -318,6 +318,7 @@ async function main(): Promise<void> {
       purchaseOrderCreation === undefined
         ? undefined
         : {
+            isAvailable: () => paymentAvailability.isAvailable(),
             async create(
               input: Parameters<PurchaseOrderCreationService["create"]>[0],
             ) {
