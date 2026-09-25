@@ -63,6 +63,7 @@ describe("Telegram Energy UI", () => {
     ).toEqual([
       "65K Energy · 1 笔",
       "131K Energy · 1 笔",
+      "返回主菜单",
     ]);
   });
 
