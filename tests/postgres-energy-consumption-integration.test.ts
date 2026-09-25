@@ -273,6 +273,66 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     });
   });
 
+  it("lists only recent Energy orders owned by the requesting Telegram user", async () => {
+    const ownerTelegramUserId = 9_200_000_000_021n;
+    const otherTelegramUserId = 9_200_000_000_022n;
+    const ownerUserId = await customer(ownerTelegramUserId, 3);
+    const otherUserId = await customer(otherTelegramUserId, 1);
+
+    const ownerFirst = await energy.reserve({
+      telegramUserId: ownerTelegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:owned-list:owner:1",
+    });
+    const ownerSecond = await energy.reserve({
+      telegramUserId: ownerTelegramUserId,
+      optionCode: "energy_131k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:owned-list:owner:2",
+    });
+    const other = await energy.reserve({
+      telegramUserId: otherTelegramUserId,
+      optionCode: "energy_65k",
+      recipientAddress: RECIPIENT,
+      idempotencyKey: "energy:test:owned-list:other:1",
+    });
+
+    if (
+      ownerFirst.kind !== "ready" ||
+      ownerSecond.kind !== "ready" ||
+      other.kind !== "ready"
+    ) {
+      throw new Error("Expected owned-list Energy reservations");
+    }
+
+    const ownerOrders = await energy.listOwned(ownerTelegramUserId, 5);
+    expect(ownerOrders.kind).toBe("ready");
+    if (ownerOrders.kind !== "ready") {
+      throw new Error("Expected owner recent Energy orders");
+    }
+
+    expect(ownerOrders.orders).toHaveLength(2);
+    expect(new Set(ownerOrders.orders.map((order) => order.id))).toEqual(
+      new Set([ownerFirst.order.id, ownerSecond.order.id]),
+    );
+    expect(ownerOrders.orders.every((order) => order.userId === ownerUserId))
+      .toBe(true);
+    expect(ownerOrders.orders.some((order) => order.userId === otherUserId))
+      .toBe(false);
+
+    const limited = await energy.listOwned(ownerTelegramUserId, 1);
+    expect(limited.kind).toBe("ready");
+    if (limited.kind !== "ready") {
+      throw new Error("Expected limited owner recent Energy orders");
+    }
+    expect(limited.orders).toHaveLength(1);
+
+    await expect(
+      energy.listOwned(9_200_000_009_999n, 5),
+    ).resolves.toEqual({ kind: "denied" });
+  });
+
   it("reserves one count, completes delivery, and consumes the reservation exactly once", async () => {
     const telegramUserId = 9_200_000_000_001n;
     const userId = await customer(telegramUserId, 2);
