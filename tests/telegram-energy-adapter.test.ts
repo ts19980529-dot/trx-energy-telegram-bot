@@ -268,7 +268,7 @@ describe("Telegram Energy adapter", () => {
         id: "energy-callback-1",
         from: user(),
         chat_instance: "instance-1",
-        data: `energy:use:energy_65k:${recipient}`,
+        data: `energy:go:energy_65k:${recipient}`,
         message: {
           message_id: 11,
           date: 1_700_000_000,
@@ -283,7 +283,7 @@ describe("Telegram Energy adapter", () => {
         id: "energy-callback-2",
         from: user(),
         chat_instance: "instance-1",
-        data: `energy:use:energy_65k:${recipient}`,
+        data: `energy:go:energy_65k:${recipient}`,
         message: {
           message_id: 11,
           date: 1_700_000_000,
