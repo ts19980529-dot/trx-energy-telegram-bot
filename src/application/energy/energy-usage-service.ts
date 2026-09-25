@@ -79,7 +79,7 @@ export interface EnergyUsageRepository {
     idempotencyKey: string;
     providerName: string | null;
   }[]>;
-  listOwned(
+  listOwned?(
     telegramUserId: bigint,
     limit: number,
   ): Promise<
@@ -223,6 +223,10 @@ export class EnergyUsageService {
     const limit = input.limit ?? 5;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
       throw new Error("Energy recent-order limit must be between 1 and 10");
+    }
+
+    if (this.repository.listOwned === undefined) {
+      throw new Error("Energy recent-order repository capability is unavailable");
     }
 
     return this.repository.listOwned(input.telegramUserId, limit);
