@@ -329,21 +329,22 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         .where(eq(users.telegramUserId, telegramUserId)),
     ).rejects.toBeTruthy();
   });
-  it("uses event-level identity for TRC-20 and tx-level identity for TRX", async () => {
+  it("enforces one payment row per TXID for USDT and TRX", async () => {
     const sharedUsdtTxid = "a".repeat(64);
     const usdtContract = "TUSDT_PHASE2_CONTRACT";
 
-    await resource.db.insert(paymentTransactions).values([
-      {
-        txid: sharedUsdtTxid,
-        asset: "USDT",
-        tokenContractAddress: usdtContract,
-        eventIndex: 0,
-        fromAddress: "TUSDT_FROM_0",
-        toAddress: "TUSDT_TO",
-        amountAtomic: 17_000_000n,
-      },
-      {
+    await resource.db.insert(paymentTransactions).values({
+      txid: sharedUsdtTxid,
+      asset: "USDT",
+      tokenContractAddress: usdtContract,
+      eventIndex: 0,
+      fromAddress: "TUSDT_FROM_0",
+      toAddress: "TUSDT_TO",
+      amountAtomic: 17_000_000n,
+    });
+
+    await expect(
+      resource.db.insert(paymentTransactions).values({
         txid: sharedUsdtTxid,
         asset: "USDT",
         tokenContractAddress: usdtContract,
@@ -351,28 +352,6 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         fromAddress: "TUSDT_FROM_1",
         toAddress: "TUSDT_TO",
         amountAtomic: 34_000_000n,
-      },
-    ]);
-
-    const sameTransactionEvents = await resource.db
-      .select({ eventIndex: paymentTransactions.eventIndex })
-      .from(paymentTransactions)
-      .where(eq(paymentTransactions.txid, sharedUsdtTxid));
-
-    expect(sameTransactionEvents.map((row) => row.eventIndex).sort()).toEqual([
-      0,
-      1,
-    ]);
-
-    await expect(
-      resource.db.insert(paymentTransactions).values({
-        txid: sharedUsdtTxid,
-        asset: "USDT",
-        tokenContractAddress: usdtContract,
-        eventIndex: 0,
-        fromAddress: "TUSDT_DUPLICATE",
-        toAddress: "TUSDT_TO",
-        amountAtomic: 17_000_000n,
       }),
     ).rejects.toBeTruthy();
 
@@ -1153,7 +1132,10 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     await expect(
       paymentLifecycleRepository.applyObservation({
         purchaseOrderId: secondOrder.order.id,
-        observation,
+        observation: {
+          ...observation,
+          eventIndex: observation.eventIndex + 1,
+        },
       }),
     ).resolves.toEqual({
       kind: "conflict",
