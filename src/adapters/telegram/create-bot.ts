@@ -84,8 +84,9 @@ export interface TelegramBotServices {
   };
   readonly purchaseOrderStatus?: Pick<
     PurchaseOrderStatusService,
-    "get" | "listRecent"
-  >;
+    "get"
+  > &
+    Partial<Pick<PurchaseOrderStatusService, "listRecent">>;
 }
 
 export function createTelegramBot(
@@ -153,7 +154,7 @@ export function createTelegramBot(
     const energyHistoryEnabled =
       services.energyOrderQuery !== undefined;
     const purchaseHistoryEnabled =
-      services.purchaseOrderStatus !== undefined;
+      services.purchaseOrderStatus?.listRecent !== undefined;
 
     if (
       result.packages.length === 0 &&
@@ -279,7 +280,10 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.purchaseOrderStatus === undefined) {
+    if (
+      services.purchaseOrderStatus === undefined ||
+      services.purchaseOrderStatus.listRecent === undefined
+    ) {
       await ctx.answerCallbackQuery({
         text: "支付订单查询暂不可用。",
         show_alert: true,
