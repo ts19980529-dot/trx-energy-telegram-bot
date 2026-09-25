@@ -179,6 +179,143 @@ describe("Telegram adapter", () => {
     expect(bodies[0]).not.toContain("使用能量");
   });
 
+  it("uses purchase wording when purchase ordering is enabled", async () => {
+    const bodies: string[] = [];
+    const underlyingFetch = mockFetch([]);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return {
+            kind: "ready",
+            packages: [
+              {
+                id: packageId,
+                code: "demo",
+                count: 10,
+                priceUsdtMicros: 17_000_000n,
+              },
+            ],
+          };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+      purchaseOrderCreation: {
+        async create() {
+          return { kind: "invalid_request" };
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+
+          if (url.endsWith("/sendMessage")) {
+            bodies.push(String(init?.body ?? ""));
+          }
+
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 102,
+      message: {
+        message_id: 102,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: "/start",
+        entities: [
+          {
+            offset: 0,
+            length: 6,
+            type: "bot_command",
+          },
+        ],
+      },
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("当前可购买笔数套餐");
+    expect(bodies[0]).toContain("购买笔数");
+    expect(bodies[0]).not.toContain("查看笔数套餐");
+  });
+
+  it("answers stale private callback data instead of leaving the client loading", async () => {
+    const calls: string[] = [];
+    const callbackBodies: string[] = [];
+    const underlyingFetch = mockFetch(calls);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return { kind: "ready", packages: [] };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+
+          if (url.endsWith("/answerCallbackQuery")) {
+            callbackBodies.push(String(init?.body ?? ""));
+          }
+
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 103,
+      callback_query: {
+        id: "stale-callback",
+        from: user(),
+        chat_instance: "instance-1",
+        data: "legacy:unknown-action",
+        message: {
+          message_id: 103,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(calls.filter((url) => url.endsWith("/answerCallbackQuery"))).toHaveLength(1);
+    expect(callbackBodies).toHaveLength(1);
+    expect(callbackBodies[0]).toContain("操作已失效");
+    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+  });
+
   it("rejects group callbacks before creating a purchase order", async () => {
     const calls: string[] = [];
     const purchaseInputs: unknown[] = [];
