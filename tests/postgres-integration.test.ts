@@ -1927,4 +1927,104 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("lists only recent purchase orders owned by the requesting active user", async () => {
+    const ownerTelegramUserId = 9_100_000_000_060n;
+    const otherTelegramUserId = 9_100_000_000_061n;
+    const owner = await userRepository.onboard({
+      telegramUserId: ownerTelegramUserId,
+      username: "history_owner",
+    });
+    const other = await userRepository.onboard({
+      telegramUserId: otherTelegramUserId,
+      username: "history_other",
+    });
+    const packageId = "f3333333-3333-4333-8333-333333333333";
+
+    await resource.db
+      .insert(energyPackages)
+      .values({
+        id: packageId,
+        code: "history_package",
+        count: 10,
+        priceUsdtMicros: 17_000_000n,
+        enabled: true,
+        sortOrder: 170,
+      })
+      .onConflictDoNothing();
+
+    const create = async (
+      userId: string,
+      key: string,
+      destination: string,
+    ) =>
+      purchaseOrderRepository.createOrGet({
+        userId,
+        packageId,
+        idempotencyKey: key,
+        payment: {
+          packageCodeSnapshot: "history_package",
+          countSnapshot: 10,
+          priceUsdtMicrosSnapshot: 17_000_000n,
+          paymentAsset: "USDT",
+          paymentToAddressSnapshot: destination,
+          paymentTokenContractAddressSnapshot:
+            "TTEST_HISTORY_USDT_CONTRACT",
+          requiredConfirmationsSnapshot: 2,
+          quotedAmountAtomic: 17_000_000n,
+          quoteExpiresAt: null,
+        },
+        maxUsdtAttributionOffsetAtomic: 100n,
+      });
+
+    const ownerOrder = await create(
+      owner.id,
+      "history:owner:1",
+      "TTEST_HISTORY_OWNER",
+    );
+    const otherOrder = await create(
+      other.id,
+      "history:other:1",
+      "TTEST_HISTORY_OTHER",
+    );
+
+    if (ownerOrder.kind === "conflict" || otherOrder.kind === "conflict") {
+      throw new Error("Unexpected history order conflict");
+    }
+
+    const listed = await purchaseOrderStatusRepository.listOwnedRecent({
+      telegramUserId: ownerTelegramUserId,
+      limit: 5,
+    });
+    expect(listed.kind).toBe("ready");
+    if (listed.kind !== "ready") {
+      throw new Error("Expected owner purchase-order history");
+    }
+
+    expect(listed.orders.map((order) => order.id)).toContain(
+      ownerOrder.order.id,
+    );
+    expect(listed.orders.map((order) => order.id)).not.toContain(
+      otherOrder.order.id,
+    );
+
+    await resource.db
+      .update(users)
+      .set({ status: "blocked" })
+      .where(eq(users.id, owner.id));
+
+    await expect(
+      purchaseOrderStatusRepository.listOwnedRecent({
+        telegramUserId: ownerTelegramUserId,
+        limit: 5,
+      }),
+    ).resolves.toEqual({ kind: "denied" });
+
+    await expect(
+      purchaseOrderStatusRepository.findOwnedOrder({
+        orderId: ownerOrder.order.id,
+        telegramUserId: ownerTelegramUserId,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
 });
