@@ -64,6 +64,9 @@ export interface PurchaseOrderRepository {
 
 export type PurchaseOrderCreationResult =
   | {
+      readonly kind: "service_unavailable";
+    }
+  | {
       readonly kind: "ready";
       readonly created: boolean;
       readonly order: PurchaseOrderRecord;

@@ -57,6 +57,10 @@ import type {
 } from "../core/payments/tron-evidence-normalization.js";
 import { parseRuntimeConfig } from "./config.js";
 import { PaymentReconciliationLoop } from "./payment-reconciliation-loop.js";
+import {
+  RuntimeCapabilityGate,
+  superviseBackgroundTask,
+} from "./background-task-supervisor.js";
 
 function canonicalTronAddress(
   codec: TronAddressCodec,
@@ -221,6 +225,7 @@ async function main(): Promise<void> {
     let reconciliationLoop:
       | PaymentReconciliationLoop
       | undefined;
+    const paymentAvailability = new RuntimeCapabilityGate();
 
     if (config.usdtPayment !== undefined) {
       const toAddress = canonicalTronAddress(
@@ -309,6 +314,21 @@ async function main(): Promise<void> {
         : new PurchaseOrderStatusService(
             new PostgresPurchaseOrderStatusRepository(postgres.db),
           );
+    const telegramPurchaseOrderCreation =
+      purchaseOrderCreation === undefined
+        ? undefined
+        : {
+            isAvailable: () => paymentAvailability.isAvailable(),
+            async create(
+              input: Parameters<PurchaseOrderCreationService["create"]>[0],
+            ) {
+              if (!paymentAvailability.isAvailable()) {
+                return { kind: "service_unavailable" as const };
+              }
+
+              return purchaseOrderCreation!.create(input);
+            },
+          };
 
     startupPhase = "create_telegram_bot";
     const bot = createTelegramBot(botToken, {
@@ -316,9 +336,9 @@ async function main(): Promise<void> {
       packageSelection,
       adminAccess,
       ...(energyUsage === undefined ? {} : { energyUsage }),
-      ...(purchaseOrderCreation === undefined
+      ...(telegramPurchaseOrderCreation === undefined
         ? {}
-        : { purchaseOrderCreation }),
+        : { purchaseOrderCreation: telegramPurchaseOrderCreation }),
       ...(purchaseOrderStatus === undefined
         ? {}
         : { purchaseOrderStatus }),
@@ -330,9 +350,35 @@ async function main(): Promise<void> {
     await assertLongPollingAvailable(bot);
 
     const reconciliationAbort = new AbortController();
-    const backgroundTasks = [reconciliationLoop, deliveryRecoveryLoop, reclaimLoop]
-      .filter((loop): loop is PaymentReconciliationLoop => loop !== undefined)
-      .map((loop) => loop.run(reconciliationAbort.signal));
+    const backgroundTasks: Promise<void>[] = [];
+
+    if (reconciliationLoop !== undefined) {
+      backgroundTasks.push(
+        superviseBackgroundTask(
+          "payment-reconciliation",
+          reconciliationLoop.run(reconciliationAbort.signal),
+          () => paymentAvailability.disable(),
+        ),
+      );
+    }
+
+    if (deliveryRecoveryLoop !== undefined) {
+      backgroundTasks.push(
+        superviseBackgroundTask(
+          "energy-delivery-recovery",
+          deliveryRecoveryLoop.run(reconciliationAbort.signal),
+        ),
+      );
+    }
+
+    if (reclaimLoop !== undefined) {
+      backgroundTasks.push(
+        superviseBackgroundTask(
+          "energy-reclaim",
+          reclaimLoop.run(reconciliationAbort.signal),
+        ),
+      );
+    }
 
     const stop = (): void => {
       reconciliationAbort.abort();
@@ -355,7 +401,7 @@ async function main(): Promise<void> {
         allowed_updates: [...telegramAllowedUpdates],
       });
 
-      await Promise.race([botTask, ...backgroundTasks]);
+      await botTask;
     } finally {
       reconciliationAbort.abort();
 

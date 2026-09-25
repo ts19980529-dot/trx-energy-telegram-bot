@@ -256,6 +256,97 @@ describe("Telegram adapter", () => {
     expect(bodies[0]).not.toContain("查看笔数套餐");
   });
 
+  it("degrades purchase menus to read-only when payment reconciliation is unhealthy", async () => {
+    const bodies: string[] = [];
+    const underlyingFetch = mockFetch([]);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return {
+            kind: "ready",
+            packages: [
+              {
+                id: packageId,
+                code: "demo",
+                count: 10,
+                priceUsdtMicros: 17_000_000n,
+              },
+            ],
+          };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return {
+            kind: "ready",
+            package: {
+              id: packageId,
+              code: "demo",
+              count: 10,
+              priceUsdtMicros: 17_000_000n,
+            },
+          };
+        },
+      },
+      adminAccess: { async getRole() { return undefined; } },
+      purchaseOrderCreation: {
+        isAvailable: () => false,
+        async create() {
+          return { kind: "service_unavailable" };
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/sendMessage")) {
+            bodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 104,
+      message: {
+        message_id: 104,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: "/start",
+        entities: [{ offset: 0, length: 6, type: "bot_command" }],
+      },
+    });
+
+    expect(bodies[0]).toContain("当前可查看笔数套餐");
+    expect(bodies[0]).toContain("查看笔数套餐");
+    expect(bodies[0]).not.toContain("购买笔数");
+
+    await bot.handleUpdate({
+      update_id: 105,
+      callback_query: {
+        id: "readonly-package",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:view:${packageId}`,
+        message: {
+          message_id: 105,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(bodies.at(-1)).toContain("支付功能暂未开放");
+    expect(bodies.at(-1)).not.toContain("package:pay:");
+  });
+
   it("answers stale private callback data instead of leaving the client loading", async () => {
     const calls: string[] = [];
     const callbackBodies: string[] = [];
@@ -612,6 +703,59 @@ describe("Telegram adapter", () => {
       calls.some((url) => url.endsWith("/answerCallbackQuery")),
     ).toBe(true);
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+  });
+
+  it("fails closed for new purchases when the payment runtime is unavailable", async () => {
+    const calls: string[] = [];
+    const sentBodies: string[] = [];
+    const underlyingFetch = mockFetch(calls);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: { async execute() { return { kind: "ready", packages: [] }; } },
+      packageSelection: {
+        async select() { return { kind: "unavailable" }; },
+      },
+      adminAccess: { async getRole() { return undefined; } },
+      purchaseOrderCreation: {
+        async create() {
+          return { kind: "service_unavailable" };
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/sendMessage")) {
+            sentBodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 300,
+      callback_query: {
+        id: "callback-payment-unavailable",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}`,
+        message: {
+          message_id: 30,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0]).toContain("暂时不会创建新的支付订单");
+    expect(sentBodies[0]).toContain("已有订单仍可查询状态");
   });
 
   it("gives a safe response when purchase processing fails after acknowledging a callback", async () => {

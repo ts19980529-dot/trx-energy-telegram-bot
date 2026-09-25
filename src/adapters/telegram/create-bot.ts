@@ -73,7 +73,9 @@ export interface TelegramBotServices {
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
     "create"
-  >;
+  > & {
+    readonly isAvailable?: () => boolean;
+  };
   readonly purchaseOrderStatus?: Pick<
     PurchaseOrderStatusService,
     "get"
@@ -86,6 +88,9 @@ export function createTelegramBot(
   config?: BotConfig<Context>,
 ): Bot {
   const bot = new Bot(token, config);
+  const purchaseOrderCreationAvailable = (): boolean =>
+    services.purchaseOrderCreation !== undefined &&
+    (services.purchaseOrderCreation.isAvailable?.() ?? true);
 
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === "private") {
@@ -143,8 +148,7 @@ export function createTelegramBot(
     }
 
     const energyEnabled = services.energyUsage !== undefined;
-    const purchaseEnabled =
-      services.purchaseOrderCreation !== undefined;
+    const purchaseEnabled = purchaseOrderCreationAvailable();
 
     await ctx.reply(
       energyEnabled
@@ -589,11 +593,11 @@ export function createTelegramBot(
         `笔数：${result.package.count} 笔`,
         `价格：${formatUsdtMicros(result.package.priceUsdtMicros)} USDT`,
         "",
-        services.purchaseOrderCreation === undefined
+        !purchaseOrderCreationAvailable()
           ? "支付功能暂未开放，可先查看套餐信息。"
           : "请选择支付方式：",
       ].join("\n"),
-      services.purchaseOrderCreation === undefined
+      !purchaseOrderCreationAvailable()
         ? {}
         : { reply_markup: buildPaymentMethodKeyboard(result.package.id) },
     );
@@ -650,6 +654,11 @@ export function createTelegramBot(
     });
 
     switch (result.kind) {
+      case "service_unavailable":
+        await ctx.reply(
+          "支付服务当前不可用，暂时不会创建新的支付订单。已有订单仍可查询状态。",
+        );
+        return;
       case "ready":
         await ctx.reply(
           formatPurchaseOrderInstructions(result.order),
