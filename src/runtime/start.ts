@@ -58,6 +58,7 @@ import type {
 } from "../core/payments/tron-evidence-normalization.js";
 import { parseRuntimeConfig } from "./config.js";
 import { PaymentReconciliationLoop } from "./payment-reconciliation-loop.js";
+import { runTelegramLongPollingWithOverlapRetry } from "./telegram-long-polling.js";
 import {
   RuntimeCapabilityGate,
   superviseBackgroundTask,
@@ -398,11 +399,10 @@ async function main(): Promise<void> {
       );
 
       startupPhase = "telegram_long_polling";
-      const botTask = bot.start({
-        allowed_updates: [...telegramAllowedUpdates],
+      await runTelegramLongPollingWithOverlapRetry(bot, {
+        allowedUpdates: telegramAllowedUpdates,
+        signal: reconciliationAbort.signal,
       });
-
-      await botTask;
     } finally {
       reconciliationAbort.abort();
 
