@@ -115,7 +115,6 @@ describe("Telegram Energy adapter", () => {
             return { kind: "invalid_address" };
           },
           async execute() { return { kind: "option_unavailable" }; },
-          async getStatus() { return { kind: "not_found" }; },
         },
       }),
       { botInfo: botInfo(), client: { fetch: mockFetch(calls) } },
@@ -188,9 +187,6 @@ describe("Telegram Energy adapter", () => {
           async execute() {
             return { kind: "option_unavailable" };
           },
-          async getStatus() {
-            return { kind: "not_found" };
-          },
         },
       }),
       {
@@ -243,20 +239,14 @@ describe("Telegram Energy adapter", () => {
     const bot = createTelegramBot(
       "123456:TEST_TOKEN",
       services({
-        energyUsage: {
-          async prepare() {
-            return { kind: "invalid_address" };
-          },
-          async execute() {
-            return { kind: "option_unavailable" };
-          },
+        energyOrderQuery: {
           async listRecent(input) {
             listInputs.push(input);
             return { kind: "ready", orders: [order] };
           },
-          async getStatus(input) {
+          async get(input) {
             statusInputs.push(input);
-            return { kind: "completed", order };
+            return { kind: "found", order };
           },
         },
       }),
@@ -341,9 +331,6 @@ describe("Telegram Energy adapter", () => {
                 },
               },
             };
-          },
-          async getStatus() {
-            return { kind: "not_found" };
           },
         },
       }),
