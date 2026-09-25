@@ -67,8 +67,9 @@ export interface TelegramBotServices {
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
   readonly energyUsage?: Pick<
     EnergyUsageService,
-    "prepare" | "execute" | "getStatus" | "listRecent"
-  >;
+    "prepare" | "execute" | "getStatus"
+  > &
+    Partial<Pick<EnergyUsageService, "listRecent">>;
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
     "create"
@@ -220,9 +221,12 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.energyUsage === undefined) {
+    if (
+      services.energyUsage === undefined ||
+      services.energyUsage.listRecent === undefined
+    ) {
       await ctx.answerCallbackQuery({
-        text: "当前能量服务尚未启用。",
+        text: "能量订单查询暂不可用。",
         show_alert: true,
       });
       return;
