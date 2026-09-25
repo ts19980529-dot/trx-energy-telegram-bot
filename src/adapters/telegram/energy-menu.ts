@@ -8,6 +8,7 @@ import type {
 const HOME_MENU_CALLBACK = "menu:home";
 const ENERGY_MENU_CALLBACK = "menu:energy";
 const ENERGY_ORDERS_MENU_CALLBACK = "menu:energy-orders";
+const PURCHASE_ORDERS_MENU_CALLBACK = "menu:purchase-orders";
 const PACKAGE_MENU_CALLBACK = "menu:packages";
 const ENERGY_CONFIRM_PREFIX = "energy:cf:";
 const ENERGY_EXECUTE_PREFIX = "energy:go:";
@@ -26,21 +27,31 @@ export interface EnergyUseSelection {
 export function buildMainMenuKeyboard(
   energyEnabled: boolean,
   purchaseEnabled: boolean,
+  energyHistoryEnabled = energyEnabled,
+  purchaseHistoryEnabled = false,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   if (energyEnabled) {
-    keyboard
-      .text("使用能量", ENERGY_MENU_CALLBACK)
-      .row()
-      .text("我的能量订单", ENERGY_ORDERS_MENU_CALLBACK)
-      .row();
+    keyboard.text("使用能量", ENERGY_MENU_CALLBACK).row();
   }
 
-  return keyboard.text(
-    purchaseEnabled ? "购买笔数" : "查看笔数套餐",
-    PACKAGE_MENU_CALLBACK,
-  );
+  if (energyHistoryEnabled) {
+    keyboard.text("我的能量订单", ENERGY_ORDERS_MENU_CALLBACK).row();
+  }
+
+  keyboard
+    .text(
+      purchaseEnabled ? "购买笔数" : "查看笔数套餐",
+      PACKAGE_MENU_CALLBACK,
+    )
+    .row();
+
+  if (purchaseHistoryEnabled) {
+    keyboard.text("我的支付订单", PURCHASE_ORDERS_MENU_CALLBACK);
+  }
+
+  return keyboard;
 }
 
 export function isHomeMenuCallback(data: string): boolean {
@@ -53,6 +64,10 @@ export function isEnergyMenuCallback(data: string): boolean {
 
 export function isEnergyOrdersMenuCallback(data: string): boolean {
   return data === ENERGY_ORDERS_MENU_CALLBACK;
+}
+
+export function isPurchaseOrdersMenuCallback(data: string): boolean {
+  return data === PURCHASE_ORDERS_MENU_CALLBACK;
 }
 
 export function isPackageMenuCallback(data: string): boolean {
