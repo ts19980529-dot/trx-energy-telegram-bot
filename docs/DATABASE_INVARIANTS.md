@@ -1,6 +1,6 @@
 # Database Invariants
 
-This document defines the persistence rules for the Phase 0 Core.
+This document defines the persistence rules for the current Core.
 
 ## Confirmed business model
 

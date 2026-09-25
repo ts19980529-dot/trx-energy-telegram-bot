@@ -83,20 +83,21 @@ Confirmed purchase credit is a separate exactly-once PostgreSQL transaction. The
 
 All Energy delivery implementations must satisfy one provider contract.
 
-Planned adapters:
+Current and planned adapters:
 
-- MockEnergyProvider
-- OwnPoolProvider
-- SupplierApiProvider
-- HybridProvider
-
-The initial implementation uses MockEnergyProvider only.
+- `TronOwnPoolEnergyProvider` — implemented, but production delivery remains disabled until signer custody and chain acceptance are verified.
+- Supplier API adapter — planned; must implement the same provider contract before third-party production use.
+- Hybrid provider — future option for routing/failover behind the same contract.
+- Test/mock providers — test-only.
 
 Every provider adapter must preserve Energy order idempotency:
 
-- the same `idempotencyKey` must not create a second provider order;
+- the same `idempotencyKey` must not create a second logical provider order;
 - an ambiguous create result (for example, a timeout after the provider accepted the order) must be recoverable by `idempotencyKey`;
-- callers must query the existing order before deciding whether a create operation may be retried.
+- callers must query the existing order before deciding whether a create operation may be retried;
+- persisted `provider_name` owns an in-flight delivery, so historical orders must resume through the adapter registered for that provider rather than the currently selected provider.
+
+Energy write availability and order-history availability are separate capabilities. Disabling a provider must stop new Energy writes but must not hide persisted historical Energy orders. Read-only order queries operate from PostgreSQL and enforce Telegram-user ownership.
 
 ### SecretProvider
 
@@ -108,9 +109,19 @@ Potential adapters include environment-backed bootstrap, 1Password, Infisical, D
 
 ### Signer boundary
 
-Raw wallet private keys are not part of the Core `SecretProvider` contract.
+Raw wallet private keys are not part of the ordinary bot runtime's secret contract.
 
-The current Phase 0 Core does not sign TRON transactions. A future OwnPool implementation must use a dedicated signer boundary (for example, a signing service or restricted signing adapter) so application code requests an authorized signature/action rather than fetching a raw `TRON_PRIVATE_KEY`.
+The OwnPool implementation uses a dedicated signer runtime. The Telegram bot requests authenticated signing/recovery operations through the signer interface and must never load `TRON_SIGNER_PRIVATE_KEY`.
+
+The signer runtime:
+
+- requires its own `TRON_SIGNER_PRIVATE_KEY` and `TRON_SIGNER_AUTH_TOKEN`;
+- validates the durable attempt binding before signing;
+- persists/reuses a signed transaction for the same attempt instead of producing a second identity;
+- exposes only authenticated signing/recovery routes plus a non-sensitive health endpoint;
+- must remain isolated from the Telegram bot's runtime and secret identity.
+
+Production OwnPool delivery remains fail-closed until the signer runtime, secret custody, and live-chain acceptance are all verified.
 
 ## Customer isolation
 
@@ -161,9 +172,17 @@ They must not be duplicated across handlers or hard-coded into unrelated modules
 
 Code deployment must never automatically change Telegram profile fields such as bot name, description, short description or avatar.
 
-## Current Phase 0 rule
+The Telegram runtime is the primary availability domain. Background reconciliation/recovery workers must not terminate the bot merely because one worker encounters a fatal invariant/capacity failure. A fatal payment-reconciliation failure disables new payment-order creation and degrades purchase UI to read-only while historical order queries remain available.
 
-This document establishes boundaries only. It does not authorize production payment processing, signing, Energy delegation, refunds or wallet custody.
+Railway services must deploy from the audited repository branch. The bot and signer must not drift onto different historical source branches. GitHub-connected Railway services should use Wait for CI so a commit is deployed only after the repository's push workflow completes successfully; database preparation remains a Railway pre-deploy command as an additional deployment gate.
+
+## Current production-gate rule
+
+The repository now contains implemented payment reconciliation, exactly-once package crediting, Energy consumption state/ledger handling, OwnPool provider foundations, a dedicated signer runtime, and Telegram order-recovery flows.
+
+Implementation does not by itself authorize a capability in production. Runtime features remain fail-closed unless their complete configuration, secret boundary, CI/deployment gate, recovery behavior, and production acceptance have been verified.
+
+Third-party Energy supplier integration must not begin until the pre-provider audit has no unresolved P0/P1 defects.
 
 ## Persistence invariants
 

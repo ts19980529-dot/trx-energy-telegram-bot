@@ -8,4 +8,4 @@ This is a public Core repository. It may contain source code, tests, CI workflow
 
 Production secrets and customer-sensitive runtime credentials must never be committed.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the Phase 0 architecture and isolation rules.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current architecture, production gates, and isolation rules.
