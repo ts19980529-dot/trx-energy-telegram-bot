@@ -130,14 +130,20 @@ export function createTelegramBot(
       return;
     }
 
+    const energyEnabled = services.energyUsage !== undefined;
+    const purchaseEnabled =
+      services.purchaseOrderCreation !== undefined;
+
     await ctx.reply(
-      services.energyUsage === undefined
-        ? "能量使用暂未开放，当前可查看笔数套餐。"
-        : "请选择服务：",
+      energyEnabled
+        ? "请选择服务："
+        : purchaseEnabled
+          ? "能量使用暂未开放，当前可购买笔数套餐。"
+          : "能量使用暂未开放，当前可查看笔数套餐。",
       {
         reply_markup: buildMainMenuKeyboard(
-          services.energyUsage !== undefined,
-          services.purchaseOrderCreation !== undefined,
+          energyEnabled,
+          purchaseEnabled,
         ),
       },
     );
@@ -577,6 +583,13 @@ export function createTelegramBot(
     }
 
     await ctx.reply(`当前权限：${adminRoleLabel(role)}`);
+  });
+
+  handlers.on("callback_query:data", async (ctx) => {
+    await ctx.answerCallbackQuery({
+      text: "操作已失效，请发送 /start 重新打开菜单。",
+      show_alert: true,
+    });
   });
 
   handlers.on("message:text", async (ctx) => {
