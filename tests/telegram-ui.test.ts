@@ -35,7 +35,7 @@ describe("Telegram package UI", () => {
 
   it("builds and parses payment method callback data", () => {
     expect(packagePaymentCallbackData(id, "USDT", "AbCd123_")).toBe(
-      `package:pay:USDT:${id}`,
+      `package:pay:USDT:${id}:AbCd123_`,
     );
     expect(
       parsePackagePaymentCallbackData(`package:pay:USDT:${id}:AbCd123_`),
