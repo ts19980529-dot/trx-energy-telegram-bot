@@ -158,6 +158,70 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
+  it("shows the ledger-backed package balance on /start", async () => {
+    const bodies: string[] = [];
+    const underlyingFetch = mockFetch([]);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return { kind: "ready", packages: [] };
+        },
+      },
+      balanceQuery: {
+        async get() {
+          return {
+            kind: "ready",
+            balance: {
+              availableCount: 12,
+              reservedCount: 2,
+            },
+          };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/sendMessage")) {
+            bodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 100,
+      message: {
+        message_id: 100,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: "/start",
+        entities: [{ offset: 0, length: 6, type: "bot_command" }],
+      },
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("可用笔数：12 笔");
+    expect(bodies[0]).toContain("预留笔数：2 笔");
+  });
+
   it("hides unavailable actions from /start and shows read-only package entry", async () => {
     const bodies: string[] = [];
     const bot = createTelegramBot("123456:TEST_TOKEN", {
@@ -166,7 +230,10 @@ describe("Telegram adapter", () => {
       adminAccess: { async getRole() { return undefined; } },
     }, { botInfo: botInfo(), client: { fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.endsWith("/sendMessage")) bodies.push(String(init?.body ?? ""));
+      if (
+        url.endsWith("/sendMessage") ||
+        url.endsWith("/editMessageText")
+      ) bodies.push(String(init?.body ?? ""));
       return mockFetch([])(input, init);
     } } });
     await bot.handleUpdate({ update_id: 101, message: {
@@ -223,7 +290,10 @@ describe("Telegram adapter", () => {
               ? input.toString()
               : input.url;
 
-          if (url.endsWith("/sendMessage")) {
+          if (
+            url.endsWith("/sendMessage") ||
+            url.endsWith("/editMessageText")
+          ) {
             bodies.push(String(init?.body ?? ""));
           }
 
@@ -304,7 +374,10 @@ describe("Telegram adapter", () => {
             : input instanceof URL
               ? input.toString()
               : input.url;
-          if (url.endsWith("/sendMessage")) {
+          if (
+            url.endsWith("/sendMessage") ||
+            url.endsWith("/editMessageText")
+          ) {
             bodies.push(String(init?.body ?? ""));
           }
           return underlyingFetch(input, init);
@@ -729,7 +802,7 @@ describe("Telegram adapter", () => {
             : input instanceof URL
               ? input.toString()
               : input.url;
-          if (url.endsWith("/sendMessage")) {
+          if (url.endsWith("/editMessageText")) {
             sentBodies.push(String(init?.body ?? ""));
           }
           return underlyingFetch(input, init);
@@ -843,9 +916,14 @@ describe("Telegram adapter", () => {
       },
       adminAccess: { async getRole() { return undefined; } },
       purchaseOrderStatus: {
-        async listRecent(input) {
+        async listPage(input) {
           listInputs.push(input);
-          return { kind: "ready", orders: [order] };
+          return {
+            kind: "ready",
+            orders: [order],
+            previousCursor: null,
+            nextCursor: null,
+          };
         },
         async get(input) {
           getInputs.push(input);
@@ -875,7 +953,7 @@ describe("Telegram adapter", () => {
     expect(listInputs).toEqual([
       { telegramUserId: 42n, limit: 5 },
     ]);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
 
     await bot.handleUpdate({
       update_id: 303,
