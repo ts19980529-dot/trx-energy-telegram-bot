@@ -11,6 +11,7 @@ import type { EnergyUsageService } from "../../application/energy/energy-usage-s
 import type { PurchaseOrderCreationService } from "../../application/payments/purchase-order-service.js";
 import type { PurchaseOrderStatusService } from "../../application/payments/purchase-order-status-service.js";
 import type { AdminAccessService } from "../../application/telegram/admin-access-service.js";
+import type { BalanceQueryService } from "../../application/telegram/balance-query-service.js";
 import type { PackageSelectionService } from "../../application/telegram/package-selection-service.js";
 import type { TelegramStartService } from "../../application/telegram/start-service.js";
 import {
@@ -29,6 +30,7 @@ import {
   isPurchaseOrdersMenuCallback,
   parseEnergyConfirmCallbackData,
   parseEnergyExecuteCallbackData,
+  parseEnergyOrdersPageCallbackData,
   parseEnergyStatusCallbackData,
   parseEnergyUseCallbackData,
 } from "./energy-menu.js";
@@ -36,6 +38,7 @@ import {
   adminRoleLabel,
   buildOrderStatusKeyboard,
   buildPackageKeyboard,
+  buildPackageNavigationKeyboard,
   buildPurchaseOrderListKeyboard,
   buildPaymentMethodKeyboard,
   formatPurchaseOrderInstructions,
@@ -44,6 +47,7 @@ import {
   parseOrderStatusCallbackData,
   parsePackageCallbackData,
   parsePackagePaymentCallbackData,
+  parsePurchaseOrdersPageCallbackData,
   purchaseOrderStatusIsTerminal,
 } from "./package-menu.js";
 
@@ -67,6 +71,7 @@ export const telegramAllowedUpdates = [
 export interface TelegramBotServices {
   readonly start: Pick<TelegramStartService, "execute">;
   readonly packageSelection: Pick<PackageSelectionService, "select">;
+  readonly balanceQuery?: Pick<BalanceQueryService, "get">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
   readonly energyUsage?: Pick<
     EnergyUsageService,
@@ -74,7 +79,7 @@ export interface TelegramBotServices {
   >;
   readonly energyOrderQuery?: Pick<
     EnergyOrderQueryService,
-    "listRecent" | "get"
+    "listPage" | "get"
   >;
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
@@ -86,7 +91,7 @@ export interface TelegramBotServices {
     PurchaseOrderStatusService,
     "get"
   > &
-    Partial<Pick<PurchaseOrderStatusService, "listRecent">>;
+    Partial<Pick<PurchaseOrderStatusService, "listPage">>;
 }
 
 export function createTelegramBot(
