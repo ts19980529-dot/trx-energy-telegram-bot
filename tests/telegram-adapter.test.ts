@@ -4,6 +4,7 @@ import type { TelegramBotServices } from "../src/adapters/telegram/create-bot.js
 import { createTelegramBot } from "../src/adapters/telegram/create-bot.js";
 
 const packageId = "123e4567-e89b-12d3-a456-426614174000";
+const purchaseIntentId = "AbCd123_";
 
 function botInfo() {
   return {
@@ -491,7 +492,7 @@ describe("Telegram adapter", () => {
     }, { botInfo: botInfo(), client: { fetch: mockFetch(calls) } });
     await bot.handleUpdate({ update_id: 102, callback_query: {
       id: "group-payment", from: user(), chat_instance: "group-instance",
-      data: `package:pay:USDT:${packageId}`,
+      data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
       message: { message_id: 102, date: 1_700_000_000, chat: { id: -1001, type: "supergroup", title: "测试群" } },
     } });
     expect(purchaseInputs).toEqual([]);
@@ -691,7 +692,7 @@ describe("Telegram adapter", () => {
               userId: "33333333-3333-4333-8333-333333333333",
               packageId,
               idempotencyKey:
-                "telegram:purchase:42:42:11",
+                "telegram:purchase:42:AbCd123_",
               status: "waiting_payment",
               payment: {
                 packageCodeSnapshot: "demo",
@@ -732,7 +733,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-1",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 11,
           date: 1_700_000_000,
@@ -747,7 +748,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-2",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 11,
           date: 1_700_000_000,
@@ -761,7 +762,7 @@ describe("Telegram adapter", () => {
       telegramUserId: 42n,
       packageId,
       asset: "USDT",
-      idempotencyKey: "telegram:purchase:42:42:11",
+      idempotencyKey: "telegram:purchase:42:AbCd123_",
       requestedAt: expect.any(Date),
     });
     expect(purchaseInputs[0]).toMatchObject({
@@ -769,7 +770,7 @@ describe("Telegram adapter", () => {
       packageId,
       asset: "USDT",
       idempotencyKey:
-        "telegram:purchase:42:42:11",
+        "telegram:purchase:42:AbCd123_",
       requestedAt: expect.any(Date),
     });
     expect(
@@ -816,7 +817,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-unavailable",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 30,
           date: 1_700_000_000,
@@ -869,7 +870,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-failure",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 31,
           date: 1_700_000_000,
