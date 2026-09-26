@@ -164,7 +164,28 @@ export class EnergyPreparationService {
     readonly telegramUserId: bigint;
     readonly recipientAddress: string;
   }): Promise<PrepareEnergyUsageResult> {
-    return this.preparation.prepare(input);
+    const recipientAddress = canonicalTronAddress(
+      this.addressCodec,
+      input.recipientAddress,
+    );
+
+    if (recipientAddress === undefined) {
+      return { kind: "invalid_address" };
+    }
+
+    const prepared = await this.repository.prepare(input.telegramUserId);
+
+    if (prepared.kind === "denied") {
+      return prepared;
+    }
+
+    return {
+      kind: "ready",
+      recipientAddress,
+      availableCount: prepared.availableCount,
+      reservedCount: prepared.reservedCount,
+      options: prepared.options,
+    };
   }
 }
 
@@ -197,7 +218,7 @@ export class EnergyUsageService {
   constructor(
     private readonly repository: EnergyUsageRepository,
     private readonly provider: EnergyProvider,
-    addressCodec: TronAddressCodec,
+    private readonly addressCodec: TronAddressCodec,
     historicalProviders: readonly EnergyProvider[] = [],
   ) {
     this.preparation = new EnergyPreparationService(
@@ -222,28 +243,7 @@ export class EnergyUsageService {
     readonly telegramUserId: bigint;
     readonly recipientAddress: string;
   }): Promise<PrepareEnergyUsageResult> {
-    const recipientAddress = canonicalTronAddress(
-      this.addressCodec,
-      input.recipientAddress,
-    );
-
-    if (recipientAddress === undefined) {
-      return { kind: "invalid_address" };
-    }
-
-    const prepared = await this.repository.prepare(input.telegramUserId);
-
-    if (prepared.kind === "denied") {
-      return prepared;
-    }
-
-    return {
-      kind: "ready",
-      recipientAddress,
-      availableCount: prepared.availableCount,
-      reservedCount: prepared.reservedCount,
-      options: prepared.options,
-    };
+    return this.preparation.prepare(input);
   }
 
   async execute(input: {
