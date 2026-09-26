@@ -11,6 +11,7 @@ import {
   PostgresPurchaseOrderRepository,
 } from "../src/adapters/database/postgres-purchase-order-repository.js";
 import {
+  PostgresBalanceQueryRepository,
   PostgresEnergyPackageRepository,
   PostgresTelegramUserRepository,
 } from "../src/adapters/database/postgres-telegram-repositories.js";
@@ -43,6 +44,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
   let resource: PostgresResource;
   let userRepository: PostgresTelegramUserRepository;
   let packageRepository: PostgresEnergyPackageRepository;
+  let balanceQueryRepository: PostgresBalanceQueryRepository;
   let purchaseOrderRepository: PostgresPurchaseOrderRepository;
   let purchaseOrderCustomerRepository: PostgresPurchaseOrderCustomerRepository;
   let paymentLifecycleRepository: PostgresPaymentLifecycleRepository;
@@ -65,6 +67,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
 
     userRepository = new PostgresTelegramUserRepository(resource.db);
     packageRepository = new PostgresEnergyPackageRepository(resource.db);
+    balanceQueryRepository = new PostgresBalanceQueryRepository(resource.db);
     purchaseOrderRepository = new PostgresPurchaseOrderRepository(resource.db);
     purchaseOrderCustomerRepository =
       new PostgresPurchaseOrderCustomerRepository(resource.db);
@@ -179,6 +182,16 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         reservedCount: 0,
       },
     ]);
+
+    await expect(
+      balanceQueryRepository.getByTelegramUserId(telegramUserId),
+    ).resolves.toEqual({
+      kind: "ready",
+      balance: {
+        availableCount: 0,
+        reservedCount: 0,
+      },
+    });
   });
 
   it("enforces blocked-user access before configured SUPER_ADMIN authority", async () => {
@@ -1909,7 +1922,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("lists only recent purchase orders owned by the requesting active user", async () => {
+  it("pages only purchase orders owned by the requesting active user", async () => {
     const ownerTelegramUserId = 9_100_000_000_060n;
     const otherTelegramUserId = 9_100_000_000_061n;
     const owner = await userRepository.onboard({
@@ -1958,10 +1971,15 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
         maxUsdtAttributionOffsetAtomic: 100n,
       });
 
-    const ownerOrder = await create(
+    const ownerOrder1 = await create(
       owner.id,
       "history:owner:1",
-      "TTEST_HISTORY_OWNER",
+      "TTEST_HISTORY_OWNER_1",
+    );
+    const ownerOrder2 = await create(
+      owner.id,
+      "history:owner:2",
+      "TTEST_HISTORY_OWNER_2",
     );
     const otherOrder = await create(
       other.id,
@@ -1969,24 +1987,68 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       "TTEST_HISTORY_OTHER",
     );
 
-    if (ownerOrder.kind === "conflict" || otherOrder.kind === "conflict") {
+    if (
+      ownerOrder1.kind === "conflict" ||
+      ownerOrder2.kind === "conflict" ||
+      otherOrder.kind === "conflict"
+    ) {
       throw new Error("Unexpected history order conflict");
     }
 
-    const listed = await purchaseOrderStatusRepository.listOwnedRecent({
+    const first = await purchaseOrderStatusRepository.listOwnedPage({
       telegramUserId: ownerTelegramUserId,
-      limit: 5,
+      limit: 1,
     });
-    expect(listed.kind).toBe("ready");
-    if (listed.kind !== "ready") {
-      throw new Error("Expected owner purchase-order history");
+    expect(first.kind).toBe("ready");
+    if (first.kind !== "ready") {
+      throw new Error("Expected owner purchase-order first page");
     }
+    expect(first.orders).toHaveLength(1);
+    expect(first.previousCursor).toBeNull();
+    expect(first.nextCursor).not.toBeNull();
 
-    expect(listed.orders.map((order) => order.id)).toContain(
-      ownerOrder.order.id,
+    const second = await purchaseOrderStatusRepository.listOwnedPage({
+      telegramUserId: ownerTelegramUserId,
+      limit: 1,
+      cursorId: first.nextCursor!,
+      direction: "next",
+    });
+    expect(second.kind).toBe("ready");
+    if (second.kind !== "ready") {
+      throw new Error("Expected owner purchase-order second page");
+    }
+    expect(second.orders).toHaveLength(1);
+    expect(second.previousCursor).not.toBeNull();
+
+    expect(
+      new Set([
+        first.orders[0]!.id,
+        second.orders[0]!.id,
+      ]),
+    ).toEqual(
+      new Set([
+        ownerOrder1.order.id,
+        ownerOrder2.order.id,
+      ]),
     );
-    expect(listed.orders.map((order) => order.id)).not.toContain(
-      otherOrder.order.id,
+    expect(
+      [first, second].flatMap((page) =>
+        page.kind === "ready" ? page.orders.map((order) => order.id) : [],
+      ),
+    ).not.toContain(otherOrder.order.id);
+
+    const back = await purchaseOrderStatusRepository.listOwnedPage({
+      telegramUserId: ownerTelegramUserId,
+      limit: 1,
+      cursorId: second.previousCursor!,
+      direction: "previous",
+    });
+    expect(back.kind).toBe("ready");
+    if (back.kind !== "ready") {
+      throw new Error("Expected owner purchase-order previous page");
+    }
+    expect(back.orders.map((order) => order.id)).toEqual(
+      first.orders.map((order) => order.id),
     );
 
     await resource.db
@@ -1995,7 +2057,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
       .where(eq(users.id, owner.id));
 
     await expect(
-      purchaseOrderStatusRepository.listOwnedRecent({
+      purchaseOrderStatusRepository.listOwnedPage({
         telegramUserId: ownerTelegramUserId,
         limit: 5,
       }),
@@ -2003,7 +2065,7 @@ describePostgres("PostgreSQL Telegram foundation integration", () => {
 
     await expect(
       purchaseOrderStatusRepository.findOwnedOrder({
-        orderId: ownerOrder.order.id,
+        orderId: ownerOrder1.order.id,
         telegramUserId: ownerTelegramUserId,
       }),
     ).resolves.toBeUndefined();
