@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 
 import type {
   EnergyConsumptionSnapshot,
@@ -139,24 +139,32 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
     return rows;
   }
 
-  async listOwned(
-    telegramUserId: bigint,
-    limit: number,
-  ): Promise<
+  async listOwnedPage(input: {
+    readonly telegramUserId: bigint;
+    readonly limit: number;
+    readonly cursorId?: string;
+    readonly direction?: "next" | "previous";
+  }): Promise<
     | { readonly kind: "denied" }
     | {
         readonly kind: "ready";
         readonly orders: readonly EnergyConsumptionSnapshot[];
+        readonly previousCursor: string | null;
+        readonly nextCursor: string | null;
       }
   > {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 10
+    ) {
       throw new Error("Energy owned-order limit must be between 1 and 10");
     }
 
     const [user] = await this.db
       .select({ id: users.id, status: users.status })
       .from(users)
-      .where(eq(users.telegramUserId, telegramUserId))
+      .where(eq(users.telegramUserId, input.telegramUserId))
       .limit(1);
 
     if (user === undefined || user.status === "blocked") {
@@ -173,18 +181,100 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       throw new Error("Active Energy customer is missing package balance");
     }
 
-    const orders = await this.db
-      .select()
-      .from(energyConsumptionOrders)
-      .where(eq(energyConsumptionOrders.userId, user.id))
-      .orderBy(
-        desc(energyConsumptionOrders.createdAt),
-        desc(energyConsumptionOrders.id),
-      )
-      .limit(limit);
+    let cursor:
+      | { readonly id: string; readonly createdAt: Date }
+      | undefined;
+
+    if (input.cursorId !== undefined) {
+      [cursor] = await this.db
+        .select({
+          id: energyConsumptionOrders.id,
+          createdAt: energyConsumptionOrders.createdAt,
+        })
+        .from(energyConsumptionOrders)
+        .where(
+          and(
+            eq(energyConsumptionOrders.id, input.cursorId),
+            eq(energyConsumptionOrders.userId, user.id),
+          ),
+        )
+        .limit(1);
+
+      if (cursor === undefined) {
+        return {
+          kind: "ready",
+          orders: [],
+          previousCursor: null,
+          nextCursor: null,
+        };
+      }
+    }
+
+    const pageCondition =
+      cursor === undefined
+        ? eq(energyConsumptionOrders.userId, user.id)
+        : input.direction === "previous"
+          ? and(
+              eq(energyConsumptionOrders.userId, user.id),
+              or(
+                gt(energyConsumptionOrders.createdAt, cursor.createdAt),
+                and(
+                  eq(energyConsumptionOrders.createdAt, cursor.createdAt),
+                  gt(energyConsumptionOrders.id, cursor.id),
+                ),
+              ),
+            )
+          : and(
+              eq(energyConsumptionOrders.userId, user.id),
+              or(
+                lt(energyConsumptionOrders.createdAt, cursor.createdAt),
+                and(
+                  eq(energyConsumptionOrders.createdAt, cursor.createdAt),
+                  lt(energyConsumptionOrders.id, cursor.id),
+                ),
+              ),
+            );
+
+    const rawOrders = input.direction === "previous"
+      ? await this.db
+          .select()
+          .from(energyConsumptionOrders)
+          .where(pageCondition)
+          .orderBy(
+            asc(energyConsumptionOrders.createdAt),
+            asc(energyConsumptionOrders.id),
+          )
+          .limit(input.limit + 1)
+      : await this.db
+          .select()
+          .from(energyConsumptionOrders)
+          .where(pageCondition)
+          .orderBy(
+            desc(energyConsumptionOrders.createdAt),
+            desc(energyConsumptionOrders.id),
+          )
+          .limit(input.limit + 1);
+
+    const hasMore = rawOrders.length > input.limit;
+    const selected = rawOrders.slice(0, input.limit);
+    const orders =
+      input.direction === "previous"
+        ? [...selected].reverse()
+        : selected;
 
     if (orders.length === 0) {
-      return { kind: "ready", orders: [] };
+      return {
+        kind: "ready",
+        orders: [],
+        previousCursor:
+          input.direction === "next" && cursor !== undefined
+            ? cursor.id
+            : null,
+        nextCursor:
+          input.direction === "previous" && cursor !== undefined
+            ? cursor.id
+            : null,
+      };
     }
 
     const deliveries = await this.db
@@ -203,6 +293,27 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       ]),
     );
 
+    const first = orders[0]!;
+    const last = orders[orders.length - 1]!;
+    const previousCursor =
+      cursor === undefined
+        ? null
+        : input.direction === "previous"
+          ? hasMore
+            ? first.id
+            : null
+          : first.id;
+    const nextCursor =
+      cursor === undefined
+        ? hasMore
+          ? last.id
+          : null
+        : input.direction === "previous"
+          ? last.id
+          : hasMore
+            ? last.id
+            : null;
+
     return {
       kind: "ready",
       orders: orders.map((order) =>
@@ -212,6 +323,8 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
           delivery: deliveryByOrderId.get(order.id),
         }),
       ),
+      previousCursor,
+      nextCursor,
     };
   }
 
