@@ -286,18 +286,24 @@ export function createTelegramBot(
     });
 
     if (result.kind === "blocked") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     if (result.packages.length === 0) {
-      await ctx.reply("当前暂无可用套餐。");
+      await renderInteractive(
+        ctx,
+        "当前暂无可用套餐。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply("请选择笔数套餐：", {
-      reply_markup: buildPackageKeyboard(result.packages),
-    });
+    await renderInteractive(
+      ctx,
+      "请选择笔数套餐：",
+      buildPackageKeyboard(result.packages),
+    );
   });
 
   handlers.callbackQuery("menu:energy", async (ctx) => {
@@ -308,90 +314,197 @@ export function createTelegramBot(
     await ctx.answerCallbackQuery();
 
     if (services.energyUsage === undefined) {
-      await ctx.reply("当前能量服务尚未启用。");
+      await renderInteractive(
+        ctx,
+        "当前能量服务尚未启用。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply("请发送需要接收能量的 TRON 地址。", {
-      reply_markup: buildHomeKeyboard(),
-    });
+    await renderInteractive(
+      ctx,
+      "请发送需要接收能量的 TRON 地址。",
+      buildHomeKeyboard(),
+    );
   });
+
+  const showEnergyOrders = async (
+    ctx: Context,
+    page?: {
+      readonly direction: "next" | "previous";
+      readonly cursorId: string;
+    },
+  ): Promise<void> => {
+    if (ctx.from === undefined || services.energyOrderQuery === undefined) {
+      await renderInteractive(
+        ctx,
+        "能量订单查询暂不可用。",
+        buildHomeKeyboard(),
+      );
+      return;
+    }
+
+    let result = await services.energyOrderQuery.listPage({
+      telegramUserId: BigInt(ctx.from.id),
+      limit: 5,
+      ...(page === undefined
+        ? {}
+        : {
+            cursorId: page.cursorId,
+            direction: page.direction,
+          }),
+    });
+
+    if (
+      result.kind === "ready" &&
+      result.orders.length === 0 &&
+      page !== undefined
+    ) {
+      result = await services.energyOrderQuery.listPage({
+        telegramUserId: BigInt(ctx.from.id),
+        limit: 5,
+      });
+    }
+
+    if (result.kind === "denied") {
+      await renderInteractive(ctx, "账号当前不可用。");
+      return;
+    }
+
+    if (result.orders.length === 0) {
+      await renderInteractive(
+        ctx,
+        "暂无能量订单。",
+        buildHomeKeyboard(),
+      );
+      return;
+    }
+
+    await renderInteractive(
+      ctx,
+      "我的能量订单：",
+      buildEnergyOrderListKeyboard(result.orders, {
+        previousCursor: result.previousCursor,
+        nextCursor: result.nextCursor,
+      }),
+    );
+  };
 
   handlers.callbackQuery("menu:energy-orders", async (ctx) => {
     if (!isEnergyOrdersMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
 
-    if (services.energyOrderQuery === undefined) {
+    await ctx.answerCallbackQuery();
+    await showEnergyOrders(ctx);
+  });
+
+  handlers.callbackQuery(/^menu:energy-orders:/, async (ctx) => {
+    const page = parseEnergyOrdersPageCallbackData(
+      ctx.callbackQuery.data,
+    );
+    if (page === undefined) {
       await ctx.answerCallbackQuery({
-        text: "能量订单查询暂不可用。",
+        text: "订单翻页操作已失效。",
         show_alert: true,
       });
       return;
     }
 
     await ctx.answerCallbackQuery();
+    await showEnergyOrders(ctx, page);
+  });
 
-    const result = await services.energyOrderQuery.listRecent({
+  const showPurchaseOrders = async (
+    ctx: Context,
+    page?: {
+      readonly direction: "next" | "previous";
+      readonly cursorId: string;
+    },
+  ): Promise<void> => {
+    if (
+      ctx.from === undefined ||
+      services.purchaseOrderStatus === undefined ||
+      services.purchaseOrderStatus.listPage === undefined
+    ) {
+      await renderInteractive(
+        ctx,
+        "支付订单查询暂不可用。",
+        buildHomeKeyboard(),
+      );
+      return;
+    }
+
+    let result = await services.purchaseOrderStatus.listPage({
       telegramUserId: BigInt(ctx.from.id),
       limit: 5,
+      ...(page === undefined
+        ? {}
+        : {
+            cursorId: page.cursorId,
+            direction: page.direction,
+          }),
     });
 
+    if (
+      result.kind === "ready" &&
+      result.orders.length === 0 &&
+      page !== undefined
+    ) {
+      result = await services.purchaseOrderStatus.listPage({
+        telegramUserId: BigInt(ctx.from.id),
+        limit: 5,
+      });
+    }
+
     if (result.kind === "denied") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     if (result.orders.length === 0) {
-      await ctx.reply("暂无能量订单。", {
-        reply_markup: buildHomeKeyboard(),
-      });
+      await renderInteractive(
+        ctx,
+        "暂无支付订单。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply("最近能量订单：", {
-      reply_markup: buildEnergyOrderListKeyboard(result.orders),
-    });
-  });
+    await renderInteractive(
+      ctx,
+      "我的支付订单：",
+      buildPurchaseOrderListKeyboard(result.orders, {
+        previousCursor: result.previousCursor,
+        nextCursor: result.nextCursor,
+      }),
+    );
+  };
 
   handlers.callbackQuery("menu:purchase-orders", async (ctx) => {
     if (!isPurchaseOrdersMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
 
-    if (
-      services.purchaseOrderStatus === undefined ||
-      services.purchaseOrderStatus.listRecent === undefined
-    ) {
+    await ctx.answerCallbackQuery();
+    await showPurchaseOrders(ctx);
+  });
+
+  handlers.callbackQuery(/^menu:purchase-orders:/, async (ctx) => {
+    const page = parsePurchaseOrdersPageCallbackData(
+      ctx.callbackQuery.data,
+    );
+    if (page === undefined) {
       await ctx.answerCallbackQuery({
-        text: "支付订单查询暂不可用。",
+        text: "订单翻页操作已失效。",
         show_alert: true,
       });
       return;
     }
 
     await ctx.answerCallbackQuery();
-
-    const result = await services.purchaseOrderStatus.listRecent({
-      telegramUserId: BigInt(ctx.from.id),
-      limit: 5,
-    });
-
-    if (result.kind === "denied") {
-      await ctx.reply("账号当前不可用。");
-      return;
-    }
-
-    if (result.orders.length === 0) {
-      await ctx.reply("暂无支付订单。", {
-        reply_markup: buildHomeKeyboard(),
-      });
-      return;
-    }
-
-    await ctx.reply("最近支付订单：", {
-      reply_markup: buildPurchaseOrderListKeyboard(result.orders),
-    });
+    await showPurchaseOrders(ctx, page);
   });
 
   handlers.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
