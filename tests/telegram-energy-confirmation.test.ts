@@ -320,6 +320,128 @@ describe("Telegram Energy confirmation flow", () => {
     });
   });
 
+  it("keeps Energy preparation visible before a delivery provider is activated and fails closed at execution", async () => {
+    const requests: Array<{
+      url: string;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const prepareInputs: unknown[] = [];
+
+    const bot = createTelegramBot(
+      "123456:TEST_TOKEN",
+      {
+        start: {
+          async execute() {
+            return { kind: "ready" as const, packages: [] };
+          },
+        },
+        packageSelection: {
+          async select() {
+            return { kind: "unavailable" as const };
+          },
+        },
+        adminAccess: {
+          async getRole() {
+            return undefined;
+          },
+        },
+        energyPreparation: {
+          async prepare(input) {
+            prepareInputs.push(input);
+            return {
+              kind: "ready" as const,
+              recipientAddress,
+              availableCount: 3,
+              reservedCount: 0,
+              options: [
+                {
+                  id: "11111111-1111-4111-8111-111111111111",
+                  code: "E65",
+                  energyAmount: 65_000n,
+                  countCost: 1,
+                },
+              ],
+            };
+          },
+        },
+      },
+      { botInfo: botInfo(), client: { fetch: mockFetch(requests) } },
+    );
+
+    await bot.handleUpdate({
+      update_id: 505,
+      message: {
+        message_id: 53,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: "/start",
+        entities: [{ offset: 0, length: 6, type: "bot_command" }],
+      },
+    });
+
+    const home = requests.find((request) =>
+      request.url.endsWith("/sendMessage"),
+    );
+    expect(home?.body?.reply_markup).toBeDefined();
+    expect(JSON.stringify(home?.body?.reply_markup)).toContain("使用能量");
+
+    requests.length = 0;
+    await bot.handleUpdate({
+      update_id: 506,
+      callback_query: {
+        id: "energy-preparation-only",
+        from: user(),
+        chat_instance: "instance-energy",
+        data: energyConfirmCallbackData("E65", recipientAddress),
+        message: {
+          message_id: 54,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(prepareInputs).toEqual([
+      {
+        telegramUserId: 42n,
+        recipientAddress,
+      },
+    ]);
+    const confirmation = requests.find((request) =>
+      request.url.endsWith("/editMessageText"),
+    );
+    expect(confirmation?.body?.text).toContain("确认使用能量");
+
+    requests.length = 0;
+    await bot.handleUpdate({
+      update_id: 507,
+      callback_query: {
+        id: "energy-execution-without-provider",
+        from: user(),
+        chat_instance: "instance-energy",
+        data: energyExecuteCallbackData("E65", recipientAddress),
+        message: {
+          message_id: 54,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    const blockedExecution = requests.find((request) =>
+      request.url.endsWith("/answerCallbackQuery"),
+    );
+    expect(blockedExecution?.body?.text).toContain("能量投递暂不可用");
+    expect(blockedExecution?.body?.text).toContain("不会扣除笔数");
+    expect(
+      requests.some((request) =>
+        request.url.endsWith("/sendMessage") ||
+        request.url.endsWith("/editMessageText"),
+      ),
+    ).toBe(false);
+  });
+
   it("does not let historical direct-use buttons bypass confirmation", async () => {
     const requests: Array<{
       url: string;
