@@ -65,6 +65,9 @@ export class EnergyOrderQueryService {
       throw new Error("Energy order page direction requires a cursor");
     }
 
+    if (input.cursorId !== undefined && input.direction === undefined) {
+      throw new Error("Energy order page cursor requires a direction");
+    }
     return this.repository.listOwnedPage({
       telegramUserId: input.telegramUserId,
       limit,
