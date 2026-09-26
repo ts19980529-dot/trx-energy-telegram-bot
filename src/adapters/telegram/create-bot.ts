@@ -988,7 +988,11 @@ export function createTelegramBot(
         await renderInteractive(
           ctx,
           formatPurchaseOrderInstructions(result.order),
-          buildOrderStatusKeyboard(result.order.id),
+          buildOrderStatusKeyboard(
+            result.order.id,
+            true,
+            result.order.payment.paymentToAddressSnapshot,
+          ),
         );
         return;
       case "denied":
@@ -1087,6 +1091,9 @@ export function createTelegramBot(
           reply_markup: buildOrderStatusKeyboard(
             result.order.id,
             !terminal,
+            terminal
+              ? undefined
+              : result.order.payment.paymentToAddressSnapshot,
           ),
         },
       );
