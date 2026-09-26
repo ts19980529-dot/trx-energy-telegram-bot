@@ -52,7 +52,9 @@ describe("Telegram Energy UI", () => {
 
   it("builds a persistent business keyboard for stable main navigation", () => {
     const keyboard = buildPersistentMainMenuKeyboard(true, true, true, true);
-    const labels = keyboard.keyboard.flat().map((button) => button.text);
+    const labels = keyboard.keyboard.flat().map((button) =>
+      "text" in button ? button.text : undefined,
+    );
 
     expect(labels).toEqual([
       mainMenuLabels.energy,
