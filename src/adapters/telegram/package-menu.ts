@@ -15,10 +15,12 @@ const PACKAGE_MENU_CALLBACK = "menu:packages";
 const HOME_MENU_CALLBACK = "menu:home";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PURCHASE_INTENT_PATTERN = /^[A-Za-z0-9_-]{8}$/;
 
 export interface PackagePaymentSelection {
   readonly asset: PaymentAsset;
   readonly packageId: string;
+  readonly purchaseIntentId: string;
 }
 
 function formatSixDecimalAtomic(value: bigint): string {
@@ -70,8 +72,24 @@ export function parsePackageCallbackData(data: string): string | undefined {
 export function packagePaymentCallbackData(
   id: string,
   asset: PaymentAsset,
+  purchaseIntentId: string,
 ): string {
-  return `${PACKAGE_PAYMENT_CALLBACK_PREFIX}${asset}:${id}`;
+  if (!UUID_PATTERN.test(id)) {
+    throw new Error("Package ID is not callback-safe");
+  }
+
+  if (!PURCHASE_INTENT_PATTERN.test(purchaseIntentId)) {
+    throw new Error("Purchase intent ID is not callback-safe");
+  }
+
+  const value =
+    `${PACKAGE_PAYMENT_CALLBACK_PREFIX}${asset}:${id}:${purchaseIntentId}`;
+
+  if (Buffer.byteLength(value, "utf8") > 64) {
+    throw new Error("Package payment callback exceeds Telegram 64-byte limit");
+  }
+
+  return value;
 }
 
 export function parsePackagePaymentCallbackData(
@@ -82,18 +100,20 @@ export function parsePackagePaymentCallbackData(
   }
 
   const payload = data.slice(PACKAGE_PAYMENT_CALLBACK_PREFIX.length);
-  const separator = payload.indexOf(":");
+  const parts = payload.split(":");
 
-  if (separator <= 0) {
+  if (parts.length !== 3) {
     return undefined;
   }
 
-  const assetRaw = payload.slice(0, separator);
-  const packageId = payload.slice(separator + 1);
+  const [assetRaw, packageId, purchaseIntentId] = parts;
 
   if (
     (assetRaw !== "USDT" && assetRaw !== "TRX") ||
-    !UUID_PATTERN.test(packageId)
+    packageId === undefined ||
+    purchaseIntentId === undefined ||
+    !UUID_PATTERN.test(packageId) ||
+    !PURCHASE_INTENT_PATTERN.test(purchaseIntentId)
   ) {
     return undefined;
   }
@@ -101,6 +121,7 @@ export function parsePackagePaymentCallbackData(
   return {
     asset: assetRaw,
     packageId,
+    purchaseIntentId,
   };
 }
 
@@ -268,11 +289,16 @@ export function buildOrderStatusKeyboard(
 
 export function buildPaymentMethodKeyboard(
   packageId: string,
+  purchaseIntentId: string,
 ): InlineKeyboard {
   return new InlineKeyboard()
     .text(
       "USDT 支付",
-      packagePaymentCallbackData(packageId, "USDT"),
+      packagePaymentCallbackData(
+        packageId,
+        "USDT",
+        purchaseIntentId,
+      ),
     )
     .row()
     .text("返回套餐列表", PACKAGE_MENU_CALLBACK)
