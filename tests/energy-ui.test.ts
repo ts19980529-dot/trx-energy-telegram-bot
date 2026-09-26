@@ -7,6 +7,7 @@ import {
   energyOrdersPageCallbackData,
   energyStatusCallbackData,
   energyUseCallbackData,
+  formatEnergyConfirmation,
   formatEnergyOrder,
   parseEnergyOrdersPageCallbackData,
   parseEnergyStatusCallbackData,
@@ -119,6 +120,24 @@ describe("Telegram Energy UI", () => {
       direction: "next",
       cursorId: orderId,
     });
+  });
+
+  it("explains reservation, final deduction, and failure release before confirmation", () => {
+    const message = formatEnergyConfirmation({
+      recipientAddress: recipient,
+      option: {
+        id: "11111111-1111-4111-8111-111111111111",
+        code: "energy_65k",
+        energyAmount: 65_000n,
+        countCost: 1,
+      },
+      availableCount: 10,
+      reservedCount: 0,
+    });
+
+    expect(message).toContain("先预留 1 笔");
+    expect(message).toContain("投递成功后正式扣除");
+    expect(message).toContain("投递失败会按规则退回");
   });
 
   it("builds stable Energy status callbacks and terminal order text", () => {
