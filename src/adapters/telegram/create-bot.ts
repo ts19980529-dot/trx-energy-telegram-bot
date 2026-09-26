@@ -900,7 +900,7 @@ export function createTelegramBot(
 
     if (selection === undefined) {
       await ctx.answerCallbackQuery({
-        text: "无效支付操作。",
+        text: "支付操作已更新，请重新选择套餐。",
         show_alert: true,
       });
       return;
