@@ -46,6 +46,19 @@ describe("parseRuntimeConfig", () => {
     });
   });
 
+  it("parses and normalizes an optional Telegram support username", () => {
+    expect(
+      parseRuntimeConfig({ SUPPORT_TELEGRAM_USERNAME: "@le1688888" }),
+    ).toEqual({
+      secretProvider: "environment",
+      supportTelegramUsername: "le1688888",
+    });
+
+    expect(() =>
+      parseRuntimeConfig({ SUPPORT_TELEGRAM_USERNAME: "bad-name" }),
+    ).toThrow(/SUPPORT_TELEGRAM_USERNAME/);
+  });
+
   it("accepts a positive numeric SUPER_ADMIN_ID", () => {
     expect(
       parseRuntimeConfig({
