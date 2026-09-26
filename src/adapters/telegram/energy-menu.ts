@@ -81,7 +81,10 @@ export function buildPersistentMainMenuKeyboard(
     keyboard.text(mainMenuLabels.packages);
   }
 
-  if (energyEnabled || packageCatalogAvailable) {
+  if (
+    (energyEnabled || packageCatalogAvailable) &&
+    (energyHistoryEnabled || purchaseHistoryEnabled)
+  ) {
     keyboard.row();
   }
 
