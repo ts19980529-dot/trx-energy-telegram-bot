@@ -154,6 +154,20 @@ function canonicalTronAddress(
   return codec.toBase58Check(encoded);
 }
 
+export class EnergyPreparationService {
+  constructor(
+    private readonly repository: Pick<EnergyUsageRepository, "prepare">,
+    private readonly addressCodec: TronAddressCodec,
+  ) {}
+
+  async prepare(input: {
+    readonly telegramUserId: bigint;
+    readonly recipientAddress: string;
+  }): Promise<PrepareEnergyUsageResult> {
+    return this.preparation.prepare(input);
+  }
+}
+
 function resultFromOrder(
   order: EnergyConsumptionSnapshot,
 ): ExecuteEnergyUsageResult {
@@ -176,15 +190,20 @@ function providerResultStatus(
 
 export class EnergyUsageService {
   private readonly providers: ReadonlyMap<string, EnergyProvider>;
+  private readonly preparation: EnergyPreparationService;
   // Transient same-process serialization only; durable idempotency remains in the repository/provider.
   private readonly activeOrders = new Map<string, Promise<void>>();
 
   constructor(
     private readonly repository: EnergyUsageRepository,
     private readonly provider: EnergyProvider,
-    private readonly addressCodec: TronAddressCodec,
+    addressCodec: TronAddressCodec,
     historicalProviders: readonly EnergyProvider[] = [],
   ) {
+    this.preparation = new EnergyPreparationService(
+      repository,
+      addressCodec,
+    );
     const registered = new Map<string, EnergyProvider>();
     for (const entry of [provider, ...historicalProviders]) {
       if (entry.name.trim().length === 0 || registered.has(entry.name)) {
