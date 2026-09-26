@@ -1,5 +1,8 @@
 import { EnergyOrderQueryService } from "../application/energy/energy-order-query-service.js";
-import { EnergyUsageService } from "../application/energy/energy-usage-service.js";
+import {
+  EnergyPreparationService,
+  EnergyUsageService,
+} from "../application/energy/energy-usage-service.js";
 import { EnergyReclaimService } from "../application/energy/energy-reclaim-service.js";
 import { EnergyDeliveryRecoveryService } from "../application/energy/energy-delivery-recovery-service.js";
 import { PurchaseOrderCreationService } from "../application/payments/purchase-order-service.js";
@@ -164,6 +167,10 @@ async function main(): Promise<void> {
     let energyUsage: EnergyUsageService | undefined;
     let reclaimLoop: PaymentReconciliationLoop | undefined;
     const energyRepository = new PostgresEnergyUsageRepository(postgres.db);
+    const energyPreparation = new EnergyPreparationService(
+      energyRepository,
+      addressCodec,
+    );
     const energyOrderQuery = new EnergyOrderQueryService(
       energyRepository,
     );
@@ -338,12 +345,17 @@ async function main(): Promise<void> {
             },
           };
 
+    console.info(
+      `Runtime capabilities: energyPreparation=enabled; energyDelivery=${energyUsage === undefined ? "disabled" : "enabled"}; usdtPurchase=${purchaseOrderCreation === undefined ? "disabled" : "enabled"}`,
+    );
+
     startupPhase = "create_telegram_bot";
     const bot = createTelegramBot(botToken, {
       start: startService,
       packageSelection,
       balanceQuery,
       adminAccess,
+      energyPreparation,
       energyOrderQuery,
       ...(energyUsage === undefined ? {} : { energyUsage }),
       ...(telegramPurchaseOrderCreation === undefined
