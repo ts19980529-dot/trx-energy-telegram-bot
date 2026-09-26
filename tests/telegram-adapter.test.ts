@@ -218,9 +218,75 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(bodies).toHaveLength(1);
+    expect(bodies).toHaveLength(2);
     expect(bodies[0]).toContain("可用笔数：12 笔");
     expect(bodies[0]).toContain("预留笔数：2 笔");
+  });
+
+  it("shows one-tap Telegram support and a persistent business keyboard on /start", async () => {
+    const bodies: string[] = [];
+    const underlyingFetch = mockFetch([]);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return {
+            kind: "ready",
+            packages: [
+              {
+                id: packageId,
+                code: "demo",
+                count: 10,
+                priceUsdtMicros: 17_000_000n,
+              },
+            ],
+          };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+      supportTelegramUsername: "le1688888",
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/sendMessage")) {
+            bodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 1000,
+      message: {
+        message_id: 1000,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: "/start",
+        entities: [{ offset: 0, length: 6, type: "bot_command" }],
+      },
+    });
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toContain("☎️联系客服");
+    expect(bodies[0]).toContain("https://t.me/le1688888");
+    expect(bodies[1]).toContain("⚡使用能量");
+    expect(bodies[1]).toContain("✏️特惠笔数套餐");
   });
 
   it("hides unavailable Energy delivery while keeping the package purchase path visible", async () => {
@@ -241,7 +307,7 @@ describe("Telegram adapter", () => {
       message_id: 101, date: 1_700_000_000, chat: privateChat(), from: user(),
       text: "/start", entities: [{ offset: 0, length: 6, type: "bot_command" }],
     } });
-    expect(bodies).toHaveLength(1);
+    expect(bodies).toHaveLength(2);
     expect(bodies[0]).toContain("能量使用暂未开放");
     expect(bodies[0]).toContain("购买笔数");
     expect(bodies[0]).not.toContain("查看笔数套餐");
@@ -322,7 +388,7 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(bodies).toHaveLength(1);
+    expect(bodies).toHaveLength(2);
     expect(bodies[0]).toContain("当前可购买笔数套餐");
     expect(bodies[0]).toContain("购买笔数");
     expect(bodies[0]).not.toContain("查看笔数套餐");
