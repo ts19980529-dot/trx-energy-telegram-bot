@@ -85,7 +85,7 @@ export interface TelegramBotServices {
   >;
   readonly energyUsage?: Pick<
     EnergyUsageService,
-    "execute"
+    "prepare" | "execute"
   >;
   readonly energyOrderQuery?: Pick<
     EnergyOrderQueryService,
@@ -110,6 +110,8 @@ export function createTelegramBot(
   config?: BotConfig<Context>,
 ): Bot {
   const bot = new Bot(token, config);
+  const energyPreparation =
+    services.energyPreparation ?? services.energyUsage;
   const newPurchaseIntentId = (): string =>
     randomBytes(6).toString("base64url");
 
@@ -209,7 +211,7 @@ export function createTelegramBot(
       return;
     }
 
-    const energyEnabled = services.energyPreparation !== undefined;
+    const energyEnabled = energyPreparation !== undefined;
     const packageCatalogAvailable = result.packages.length > 0;
     const purchaseEnabled = packageCatalogAvailable;
     const energyHistoryEnabled =
@@ -320,7 +322,7 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
 
-    if (services.energyPreparation === undefined) {
+    if (energyPreparation === undefined) {
       await renderInteractive(
         ctx,
         "当前能量服务暂不可用。",
@@ -519,7 +521,7 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.energyPreparation === undefined) {
+    if (energyPreparation === undefined) {
       await ctx.reply("当前能量服务暂不可用。");
       return;
     }
@@ -530,7 +532,7 @@ export function createTelegramBot(
       return;
     }
 
-    const result = await services.energyPreparation.prepare({
+    const result = await energyPreparation.prepare({
       telegramUserId: BigInt(ctx.from.id),
       recipientAddress,
     });
@@ -584,7 +586,7 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.energyPreparation === undefined) {
+    if (energyPreparation === undefined) {
       await ctx.answerCallbackQuery({
         text: "当前能量服务暂不可用。",
         show_alert: true,
@@ -594,7 +596,7 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
 
-    const result = await services.energyPreparation.prepare({
+    const result = await energyPreparation.prepare({
       telegramUserId: BigInt(ctx.from.id),
       recipientAddress: selection.recipientAddress,
     });
@@ -1083,7 +1085,7 @@ export function createTelegramBot(
 
   handlers.on("message:text", async (ctx) => {
     await ctx.reply(
-      services.energyPreparation === undefined
+      energyPreparation === undefined
         ? "未识别输入，请发送 /start 打开服务菜单。"
         : "未识别输入，请发送有效的 TRON 地址，或发送 /start 返回菜单。",
     );
