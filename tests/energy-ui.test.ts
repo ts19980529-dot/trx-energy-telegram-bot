@@ -4,9 +4,11 @@ import {
   buildEnergyOptionKeyboard,
   buildEnergyOrderListKeyboard,
   buildMainMenuKeyboard,
+  energyOrdersPageCallbackData,
   energyStatusCallbackData,
   energyUseCallbackData,
   formatEnergyOrder,
+  parseEnergyOrdersPageCallbackData,
   parseEnergyStatusCallbackData,
   parseEnergyUseCallbackData,
 } from "../src/adapters/telegram/energy-menu.js";
@@ -37,6 +39,12 @@ describe("Telegram Energy UI", () => {
       "查看笔数套餐",
       "我的支付订单",
     ]);
+    expect(
+      buildMainMenuKeyboard(false, false, true, true, false)
+        .inline_keyboard
+        .flat()
+        .map((button) => button.text),
+    ).toEqual(["我的能量订单", "我的支付订单"]);
   });
 
   it("builds callback-safe Energy selections within Telegram's 64-byte limit", () => {
@@ -94,15 +102,23 @@ describe("Telegram Energy UI", () => {
     ]);
 
     const buttons = keyboard.inline_keyboard.flat();
-    expect(buttons.map((button) => button.text)).toEqual([
-      "65K · 投递中",
-      "返回主菜单",
-    ]);
+    expect(buttons[0]?.text).toContain("65K · T9yD1…");
+    expect(buttons[0]?.text).toContain("投递中");
+    expect(buttons.at(-1)?.text).toBe("返回主菜单");
     expect(
       buttons[0] && "callback_data" in buttons[0]
         ? buttons[0].callback_data
         : undefined,
     ).toBe(`energy:status:${orderId}`);
+  });
+
+  it("builds callback-safe Energy history cursors", () => {
+    const next = energyOrdersPageCallbackData("next", orderId);
+    expect(Buffer.byteLength(next, "utf8")).toBeLessThanOrEqual(64);
+    expect(parseEnergyOrdersPageCallbackData(next)).toEqual({
+      direction: "next",
+      cursorId: orderId,
+    });
   });
 
   it("builds stable Energy status callbacks and terminal order text", () => {
