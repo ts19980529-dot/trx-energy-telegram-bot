@@ -552,10 +552,10 @@ describe("Telegram adapter", () => {
 
     await started;
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(false);
     release();
     await handling;
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 
   it("acknowledges package selection while its database query is pending", async () => {
@@ -597,10 +597,10 @@ describe("Telegram adapter", () => {
 
     await started;
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(false);
     release();
     await handling;
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 
   it("rechecks access for historical package callbacks and answers denied", async () => {
@@ -775,7 +775,7 @@ describe("Telegram adapter", () => {
     expect(
       calls.some((url) => url.endsWith("/answerCallbackQuery")),
     ).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 
   it("fails closed for new purchases when the payment runtime is unavailable", async () => {
