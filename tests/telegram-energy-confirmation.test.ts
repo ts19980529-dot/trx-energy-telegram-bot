@@ -383,7 +383,7 @@ describe("Telegram Energy confirmation flow", () => {
     const homeMenu = requests.find(
       (request) =>
         request.url.endsWith("/sendMessage") &&
-        JSON.stringify(request.body?.reply_markup).includes("⚡使用能量"),
+        (JSON.stringify(request.body?.reply_markup) ?? "").includes("⚡使用能量"),
     );
     expect(homeMenu?.body?.reply_markup).toBeDefined();
     expect(JSON.stringify(homeMenu?.body?.reply_markup)).toContain("⚡使用能量");
