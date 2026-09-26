@@ -218,7 +218,7 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(bodies).toHaveLength(2);
+    expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain("可用笔数：12 笔");
     expect(bodies[0]).toContain("预留笔数：2 笔");
   });
@@ -250,6 +250,11 @@ describe("Telegram adapter", () => {
       adminAccess: {
         async getRole() {
           return undefined;
+        },
+      },
+      energyPreparation: {
+        async prepare() {
+          return { kind: "denied" as const };
         },
       },
       supportTelegramUsername: "le1688888",
