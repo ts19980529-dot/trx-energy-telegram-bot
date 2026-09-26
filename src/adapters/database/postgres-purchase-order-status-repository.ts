@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, or } from "drizzle-orm";
 
 import type {
   PurchaseOrderStatusRepository,
@@ -144,14 +144,18 @@ export class PostgresPurchaseOrderStatusRepository
     return row === undefined ? undefined : toStatusView(row);
   }
 
-  async listOwnedRecent(input: {
+  async listOwnedPage(input: {
     readonly telegramUserId: bigint;
     readonly limit: number;
+    readonly cursorId?: string;
+    readonly direction?: "next" | "previous";
   }): Promise<
     | { readonly kind: "denied" }
     | {
         readonly kind: "ready";
         readonly orders: readonly PurchaseOrderStatusView[];
+        readonly previousCursor: string | null;
+        readonly nextCursor: string | null;
       }
   > {
     if (
@@ -186,36 +190,145 @@ export class PostgresPurchaseOrderStatusRepository
       );
     }
 
-    const rows = await this.db
-      .select({
-        id: packagePurchaseOrders.id,
-        status: packagePurchaseOrders.status,
-        packageCodeSnapshot:
-          packagePurchaseOrders.packageCodeSnapshot,
-        countSnapshot: packagePurchaseOrders.countSnapshot,
-        priceUsdtMicrosSnapshot:
-          packagePurchaseOrders.priceUsdtMicrosSnapshot,
-        paymentAttributionOffsetAtomic:
-          packagePurchaseOrders.paymentAttributionOffsetAtomic,
-        paymentAsset: packagePurchaseOrders.paymentAsset,
-        paymentToAddressSnapshot:
-          packagePurchaseOrders.paymentToAddressSnapshot,
-        paymentTokenContractAddressSnapshot:
-          packagePurchaseOrders.paymentTokenContractAddressSnapshot,
-        requiredConfirmationsSnapshot:
-          packagePurchaseOrders.requiredConfirmationsSnapshot,
-        quotedAmountAtomic:
-          packagePurchaseOrders.quotedAmountAtomic,
-        quoteExpiresAt: packagePurchaseOrders.quoteExpiresAt,
-        updatedAt: packagePurchaseOrders.updatedAt,
-      })
-      .from(packagePurchaseOrders)
-      .where(eq(packagePurchaseOrders.userId, user.id))
-      .orderBy(
-        desc(packagePurchaseOrders.createdAt),
-        desc(packagePurchaseOrders.id),
-      )
-      .limit(input.limit);
+    let cursor:
+      | { readonly id: string; readonly createdAt: Date }
+      | undefined;
+
+    if (input.cursorId !== undefined) {
+      [cursor] = await this.db
+        .select({
+          id: packagePurchaseOrders.id,
+          createdAt: packagePurchaseOrders.createdAt,
+        })
+        .from(packagePurchaseOrders)
+        .where(
+          and(
+            eq(packagePurchaseOrders.id, input.cursorId),
+            eq(packagePurchaseOrders.userId, user.id),
+          ),
+        )
+        .limit(1);
+
+      if (cursor === undefined) {
+        return {
+          kind: "ready",
+          orders: [],
+          previousCursor: null,
+          nextCursor: null,
+        };
+      }
+    }
+
+    const pageCondition =
+      cursor === undefined
+        ? eq(packagePurchaseOrders.userId, user.id)
+        : input.direction === "previous"
+          ? and(
+              eq(packagePurchaseOrders.userId, user.id),
+              or(
+                gt(packagePurchaseOrders.createdAt, cursor.createdAt),
+                and(
+                  eq(packagePurchaseOrders.createdAt, cursor.createdAt),
+                  gt(packagePurchaseOrders.id, cursor.id),
+                ),
+              ),
+            )
+          : and(
+              eq(packagePurchaseOrders.userId, user.id),
+              or(
+                lt(packagePurchaseOrders.createdAt, cursor.createdAt),
+                and(
+                  eq(packagePurchaseOrders.createdAt, cursor.createdAt),
+                  lt(packagePurchaseOrders.id, cursor.id),
+                ),
+              ),
+            );
+
+    const fields = {
+      id: packagePurchaseOrders.id,
+      status: packagePurchaseOrders.status,
+      packageCodeSnapshot:
+        packagePurchaseOrders.packageCodeSnapshot,
+      countSnapshot: packagePurchaseOrders.countSnapshot,
+      priceUsdtMicrosSnapshot:
+        packagePurchaseOrders.priceUsdtMicrosSnapshot,
+      paymentAttributionOffsetAtomic:
+        packagePurchaseOrders.paymentAttributionOffsetAtomic,
+      paymentAsset: packagePurchaseOrders.paymentAsset,
+      paymentToAddressSnapshot:
+        packagePurchaseOrders.paymentToAddressSnapshot,
+      paymentTokenContractAddressSnapshot:
+        packagePurchaseOrders.paymentTokenContractAddressSnapshot,
+      requiredConfirmationsSnapshot:
+        packagePurchaseOrders.requiredConfirmationsSnapshot,
+      quotedAmountAtomic:
+        packagePurchaseOrders.quotedAmountAtomic,
+      quoteExpiresAt: packagePurchaseOrders.quoteExpiresAt,
+      updatedAt: packagePurchaseOrders.updatedAt,
+    } as const;
+
+    const rawRows = input.direction === "previous"
+      ? await this.db
+          .select(fields)
+          .from(packagePurchaseOrders)
+          .where(pageCondition)
+          .orderBy(
+            asc(packagePurchaseOrders.createdAt),
+            asc(packagePurchaseOrders.id),
+          )
+          .limit(input.limit + 1)
+      : await this.db
+          .select(fields)
+          .from(packagePurchaseOrders)
+          .where(pageCondition)
+          .orderBy(
+            desc(packagePurchaseOrders.createdAt),
+            desc(packagePurchaseOrders.id),
+          )
+          .limit(input.limit + 1);
+
+    const hasMore = rawRows.length > input.limit;
+    const selected = rawRows.slice(0, input.limit);
+    const rows =
+      input.direction === "previous"
+        ? [...selected].reverse()
+        : selected;
+
+    if (rows.length === 0) {
+      return {
+        kind: "ready",
+        orders: [],
+        previousCursor:
+          input.direction === "next" && cursor !== undefined
+            ? cursor.id
+            : null,
+        nextCursor:
+          input.direction === "previous" && cursor !== undefined
+            ? cursor.id
+            : null,
+      };
+    }
+
+    const first = rows[0]!;
+    const last = rows[rows.length - 1]!;
+    const previousCursor =
+      cursor === undefined
+        ? null
+        : input.direction === "previous"
+          ? hasMore
+            ? first.id
+            : null
+          : first.id;
+    const nextCursor =
+      cursor === undefined
+        ? hasMore
+          ? last.id
+          : null
+        : input.direction === "previous"
+          ? last.id
+          : hasMore
+            ? last.id
+            : null;
 
     return {
       kind: "ready",
@@ -225,6 +338,8 @@ export class PostgresPurchaseOrderStatusRepository
           availableCount: balance.availableCount,
         }),
       ),
+      previousCursor,
+      nextCursor,
     };
   }
 }
