@@ -223,7 +223,7 @@ describe("Telegram adapter", () => {
     expect(bodies[0]).toContain("预留笔数：2 笔");
   });
 
-  it("hides unavailable actions from /start and shows read-only package entry", async () => {
+  it("hides unavailable Energy delivery while keeping the package purchase path visible", async () => {
     const bodies: string[] = [];
     const bot = createTelegramBot("123456:TEST_TOKEN", {
       start: { async execute() { return { kind: "ready", packages: [{ id: packageId, code: "demo", count: 10, priceUsdtMicros: 17_000_000n }] }; } },
@@ -243,7 +243,8 @@ describe("Telegram adapter", () => {
     } });
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain("能量使用暂未开放");
-    expect(bodies[0]).toContain("查看笔数套餐");
+    expect(bodies[0]).toContain("购买笔数");
+    expect(bodies[0]).not.toContain("查看笔数套餐");
     expect(bodies[0]).not.toContain("使用能量");
   });
 
@@ -327,7 +328,7 @@ describe("Telegram adapter", () => {
     expect(bodies[0]).not.toContain("查看笔数套餐");
   });
 
-  it("degrades purchase menus to read-only when payment reconciliation is unhealthy", async () => {
+  it("keeps purchase navigation stable when payment reconciliation is unhealthy", async () => {
     const bodies: string[] = [];
     const underlyingFetch = mockFetch([]);
     const bot = createTelegramBot("123456:TEST_TOKEN", {
@@ -398,9 +399,9 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(bodies[0]).toContain("当前可查看笔数套餐");
-    expect(bodies[0]).toContain("查看笔数套餐");
-    expect(bodies[0]).not.toContain("购买笔数");
+    expect(bodies[0]).toContain("当前可购买笔数套餐");
+    expect(bodies[0]).toContain("购买笔数");
+    expect(bodies[0]).not.toContain("查看笔数套餐");
 
     await bot.handleUpdate({
       update_id: 105,
@@ -417,8 +418,9 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(bodies.at(-1)).toContain("支付功能暂未开放");
-    expect(bodies.at(-1)).not.toContain("package:pay:");
+    expect(bodies.at(-1)).toContain("请选择支付方式");
+    expect(bodies.at(-1)).toContain("USDT 支付");
+    expect(bodies.at(-1)).toContain("package%3Apay%3AUSDT%3A");
   });
 
   it("answers stale private callback data instead of leaving the client loading", async () => {
