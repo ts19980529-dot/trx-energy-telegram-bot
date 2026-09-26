@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   Bot,
   Context,
@@ -53,7 +55,7 @@ import {
 } from "./package-menu.js";
 
 function callbackActionKey(
-  kind: "purchase" | "energy",
+  kind: "energy",
   userId: number,
   message: { message_id: number; chat: { id: number } } | undefined,
 ): string | undefined {
@@ -104,6 +106,9 @@ export function createTelegramBot(
   const purchaseOrderCreationAvailable = (): boolean =>
     services.purchaseOrderCreation !== undefined &&
     (services.purchaseOrderCreation.isAvailable?.() ?? true);
+
+  const newPurchaseIntentId = (): string =>
+    randomBytes(6).toString("base64url");
 
   const renderInteractive = async (
     ctx: Context,
@@ -880,7 +885,10 @@ export function createTelegramBot(
           : "支付功能暂未开放，可先查看套餐信息。",
       ].join("\n"),
       paymentEnabled
-        ? buildPaymentMethodKeyboard(result.package.id)
+        ? buildPaymentMethodKeyboard(
+            result.package.id,
+            newPurchaseIntentId(),
+          )
         : buildPackageNavigationKeyboard(),
     );
   });
@@ -906,19 +914,8 @@ export function createTelegramBot(
       return;
     }
 
-    const idempotencyKey = callbackActionKey(
-      "purchase",
-      ctx.from.id,
-      ctx.callbackQuery.message,
-    );
-
-    if (idempotencyKey === undefined) {
-      await ctx.answerCallbackQuery({
-        text: "操作消息已失效，请重新打开菜单。",
-        show_alert: true,
-      });
-      return;
-    }
+    const idempotencyKey =
+      `telegram:purchase:${ctx.from.id}:${selection.purchaseIntentId}`;
 
     await ctx.answerCallbackQuery();
 
