@@ -39,7 +39,7 @@ describe("Telegram package UI", () => {
     ]).inline_keyboard.flat().map((button) => button.text);
 
     expect(labels).toEqual([
-      "10 笔 · 17 USDT",
+      "10 笔",
       "返回主菜单",
     ]);
   });
@@ -158,16 +158,25 @@ describe("Telegram package UI", () => {
       "返回主菜单",
     ]);
 
+    const statusKeyboard = buildOrderStatusKeyboard(
+      orderId,
+      true,
+      "TTEST_DESTINATION",
+    );
     expect(
-      buildOrderStatusKeyboard(orderId, true)
-        .inline_keyboard
-        .flat()
-        .map((button) => button.text),
+      statusKeyboard.inline_keyboard.flat().map((button) => button.text),
     ).toEqual([
+      "📋复制收款地址",
       "刷新订单状态",
       "我的支付订单",
       "返回主菜单",
     ]);
+    const copyButton = statusKeyboard.inline_keyboard.flat()[0];
+    expect(
+      copyButton && "copy_text" in copyButton
+        ? copyButton.copy_text.text
+        : undefined,
+    ).toBe("TTEST_DESTINATION");
   });
 
   it("builds callback-safe purchase history cursors", () => {

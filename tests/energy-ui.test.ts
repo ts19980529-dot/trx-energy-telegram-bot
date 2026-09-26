@@ -4,11 +4,13 @@ import {
   buildEnergyOptionKeyboard,
   buildEnergyOrderListKeyboard,
   buildMainMenuKeyboard,
+  buildPersistentMainMenuKeyboard,
   energyOrdersPageCallbackData,
   energyStatusCallbackData,
   energyUseCallbackData,
   formatEnergyConfirmation,
   formatEnergyOrder,
+  mainMenuLabels,
   parseEnergyOrdersPageCallbackData,
   parseEnergyStatusCallbackData,
   parseEnergyUseCallbackData,
@@ -46,6 +48,22 @@ describe("Telegram Energy UI", () => {
         .flat()
         .map((button) => button.text),
     ).toEqual(["我的能量订单", "我的支付订单"]);
+  });
+
+  it("builds a persistent business keyboard for stable main navigation", () => {
+    const keyboard = buildPersistentMainMenuKeyboard(true, true, true, true);
+    const labels = keyboard.keyboard.flat().map((button) =>
+      typeof button === "string" ? button : button.text,
+    );
+
+    expect(labels).toEqual([
+      mainMenuLabels.energy,
+      mainMenuLabels.packages,
+      mainMenuLabels.energyOrders,
+      mainMenuLabels.purchaseOrders,
+    ]);
+    expect(keyboard.resize_keyboard).toBe(true);
+    expect(keyboard.is_persistent).toBe(true);
   });
 
   it("builds callback-safe Energy selections within Telegram's 64-byte limit", () => {

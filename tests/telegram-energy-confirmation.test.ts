@@ -380,11 +380,13 @@ describe("Telegram Energy confirmation flow", () => {
       },
     });
 
-    const home = requests.find((request) =>
-      request.url.endsWith("/sendMessage"),
+    const homeMenu = requests.find(
+      (request) =>
+        request.url.endsWith("/sendMessage") &&
+        (JSON.stringify(request.body?.reply_markup) ?? "").includes("⚡使用能量"),
     );
-    expect(home?.body?.reply_markup).toBeDefined();
-    expect(JSON.stringify(home?.body?.reply_markup)).toContain("使用能量");
+    expect(homeMenu?.body?.reply_markup).toBeDefined();
+    expect(JSON.stringify(homeMenu?.body?.reply_markup)).toContain("⚡使用能量");
 
     requests.length = 0;
     await bot.handleUpdate({

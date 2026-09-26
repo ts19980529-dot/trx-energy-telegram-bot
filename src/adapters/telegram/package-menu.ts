@@ -129,9 +129,21 @@ export function buildPackageKeyboard(
   packages: readonly EnergyPackageSummary[],
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
+  const columns = 4;
 
-  for (const item of packages) {
-    keyboard.text(packageButtonLabel(item), packageCallbackData(item.id)).row();
+  packages.forEach((item, index) => {
+    keyboard.text(
+      `${item.count} 笔`,
+      packageCallbackData(item.id),
+    );
+
+    if ((index + 1) % columns === 0) {
+      keyboard.row();
+    }
+  });
+
+  if (packages.length > 0 && packages.length % columns !== 0) {
+    keyboard.row();
   }
 
   return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
@@ -269,8 +281,13 @@ export function buildPurchaseOrderListKeyboard(
 export function buildOrderStatusKeyboard(
   orderId: string,
   refreshable = true,
+  paymentAddress?: string,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
+
+  if (paymentAddress !== undefined && paymentAddress.trim().length > 0) {
+    keyboard.copyText("📋复制收款地址", paymentAddress).row();
+  }
 
   if (refreshable) {
     keyboard

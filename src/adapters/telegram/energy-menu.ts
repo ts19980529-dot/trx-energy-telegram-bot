@@ -1,4 +1,4 @@
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, Keyboard } from "grammy";
 
 import type {
   EnergyConsumptionSnapshot,
@@ -16,6 +16,13 @@ const ENERGY_EXECUTE_PREFIX = "energy:go:";
 const ENERGY_LEGACY_USE_PREFIX = "energy:use:";
 const ENERGY_CANCEL_CALLBACK = "energy:cancel";
 const ENERGY_STATUS_PREFIX = "energy:status:";
+
+export const mainMenuLabels = {
+  energy: "⚡使用能量",
+  packages: "✏️特惠笔数套餐",
+  energyOrders: "📦我的能量订单",
+  purchaseOrders: "💰我的支付订单",
+} as const;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OPTION_CODE_PATTERN = /^[A-Za-z0-9_-]{1,16}$/;
@@ -56,6 +63,40 @@ export function buildMainMenuKeyboard(
   }
 
   return keyboard;
+}
+
+export function buildPersistentMainMenuKeyboard(
+  energyEnabled: boolean,
+  energyHistoryEnabled: boolean,
+  purchaseHistoryEnabled: boolean,
+  packageCatalogAvailable: boolean,
+): Keyboard {
+  const keyboard = new Keyboard();
+
+  if (energyEnabled) {
+    keyboard.text(mainMenuLabels.energy);
+  }
+
+  if (packageCatalogAvailable) {
+    keyboard.text(mainMenuLabels.packages);
+  }
+
+  if (
+    (energyEnabled || packageCatalogAvailable) &&
+    (energyHistoryEnabled || purchaseHistoryEnabled)
+  ) {
+    keyboard.row();
+  }
+
+  if (energyHistoryEnabled) {
+    keyboard.text(mainMenuLabels.energyOrders);
+  }
+
+  if (purchaseHistoryEnabled) {
+    keyboard.text(mainMenuLabels.purchaseOrders);
+  }
+
+  return keyboard.resized().persistent();
 }
 
 export function isHomeMenuCallback(data: string): boolean {

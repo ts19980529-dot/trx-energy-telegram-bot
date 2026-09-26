@@ -355,6 +355,9 @@ async function main(): Promise<void> {
       packageSelection,
       balanceQuery,
       adminAccess,
+      ...(config.supportTelegramUsername === undefined
+        ? {}
+        : { supportTelegramUsername: config.supportTelegramUsername }),
       energyPreparation,
       energyOrderQuery,
       ...(energyUsage === undefined ? {} : { energyUsage }),

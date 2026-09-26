@@ -33,6 +33,7 @@ export interface TronEnergyRuntimeConfig {
 export interface RuntimeConfig {
   readonly secretProvider: SecretProviderKind;
   readonly superAdminId?: bigint;
+  readonly supportTelegramUsername?: string;
   readonly usdtPayment?: UsdtPaymentRuntimeConfig;
   readonly tronEnergy?: TronEnergyRuntimeConfig;
 }
@@ -99,6 +100,23 @@ function parseNonNegativeBigInt(
   }
 
   return BigInt(value);
+}
+
+function parseOptionalTelegramUsername(
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  const raw = trimmed(env, "SUPPORT_TELEGRAM_USERNAME");
+
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  const username = raw.replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{5,32}$/.test(username)) {
+    throw new Error("SUPPORT_TELEGRAM_USERNAME must be a valid Telegram username");
+  }
+
+  return username;
 }
 
 function requiredValue(
@@ -301,12 +319,16 @@ export function parseRuntimeConfig(
     }
   }
 
+  const supportTelegramUsername = parseOptionalTelegramUsername(env);
   const usdtPayment = parseUsdtPaymentConfig(env);
   const tronEnergy = parseTronEnergyConfig(env);
 
   return {
     secretProvider,
     ...(superAdminId === undefined ? {} : { superAdminId }),
+    ...(supportTelegramUsername === undefined
+      ? {}
+      : { supportTelegramUsername }),
     ...(usdtPayment === undefined ? {} : { usdtPayment }),
     ...(tronEnergy === undefined ? {} : { tronEnergy }),
   };
