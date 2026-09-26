@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import type {
   PurchaseOrderStatusRepository,
@@ -190,59 +190,26 @@ export class PostgresPurchaseOrderStatusRepository
       );
     }
 
-    let cursor:
-      | { readonly id: string; readonly createdAt: Date }
-      | undefined;
-
-    if (input.cursorId !== undefined) {
-      [cursor] = await this.db
-        .select({
-          id: packagePurchaseOrders.id,
-          createdAt: packagePurchaseOrders.createdAt,
-        })
-        .from(packagePurchaseOrders)
-        .where(
-          and(
-            eq(packagePurchaseOrders.id, input.cursorId),
-            eq(packagePurchaseOrders.userId, user.id),
-          ),
-        )
-        .limit(1);
-
-      if (cursor === undefined) {
-        return {
-          kind: "ready",
-          orders: [],
-          previousCursor: null,
-          nextCursor: null,
-        };
-      }
-    }
-
+    const hasCursor = input.cursorId !== undefined;
     const pageCondition =
-      cursor === undefined
+      !hasCursor
         ? eq(packagePurchaseOrders.userId, user.id)
-        : input.direction === "previous"
-          ? and(
-              eq(packagePurchaseOrders.userId, user.id),
-              or(
-                gt(packagePurchaseOrders.createdAt, cursor.createdAt),
-                and(
-                  eq(packagePurchaseOrders.createdAt, cursor.createdAt),
-                  gt(packagePurchaseOrders.id, cursor.id),
-                ),
-              ),
-            )
-          : and(
-              eq(packagePurchaseOrders.userId, user.id),
-              or(
-                lt(packagePurchaseOrders.createdAt, cursor.createdAt),
-                and(
-                  eq(packagePurchaseOrders.createdAt, cursor.createdAt),
-                  lt(packagePurchaseOrders.id, cursor.id),
-                ),
-              ),
-            );
+        : and(
+            eq(packagePurchaseOrders.userId, user.id),
+            input.direction === "previous"
+              ? sql`(${packagePurchaseOrders.createdAt}, ${packagePurchaseOrders.id}) > (
+                  SELECT "created_at", "id"
+                  FROM "package_purchase_orders"
+                  WHERE "id" = ${input.cursorId}
+                    AND "user_id" = ${user.id}
+                )`
+              : sql`(${packagePurchaseOrders.createdAt}, ${packagePurchaseOrders.id}) < (
+                  SELECT "created_at", "id"
+                  FROM "package_purchase_orders"
+                  WHERE "id" = ${input.cursorId}
+                    AND "user_id" = ${user.id}
+                )`,
+          );
 
     const fields = {
       id: packagePurchaseOrders.id,
@@ -299,12 +266,12 @@ export class PostgresPurchaseOrderStatusRepository
         kind: "ready",
         orders: [],
         previousCursor:
-          input.direction === "next" && cursor !== undefined
-            ? cursor.id
+          input.direction === "next" && hasCursor
+            ? input.cursorId!
             : null,
         nextCursor:
-          input.direction === "previous" && cursor !== undefined
-            ? cursor.id
+          input.direction === "previous" && hasCursor
+            ? input.cursorId!
             : null,
       };
     }
@@ -312,7 +279,7 @@ export class PostgresPurchaseOrderStatusRepository
     const first = rows[0]!;
     const last = rows[rows.length - 1]!;
     const previousCursor =
-      cursor === undefined
+      !hasCursor
         ? null
         : input.direction === "previous"
           ? hasMore
@@ -320,7 +287,7 @@ export class PostgresPurchaseOrderStatusRepository
             : null
           : first.id;
     const nextCursor =
-      cursor === undefined
+      !hasCursor
         ? hasMore
           ? last.id
           : null
