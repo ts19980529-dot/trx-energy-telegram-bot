@@ -1,5 +1,6 @@
 import { and, asc, eq } from "drizzle-orm";
 
+import type { BalanceQueryRepository } from "../../application/telegram/balance-query-service.js";
 import type {
   EnergyPackageRepository,
   EnergyPackageSummary,
@@ -138,3 +139,49 @@ export class PostgresEnergyPackageRepository
     return row;
   }
 }
+
+export class PostgresBalanceQueryRepository
+  implements BalanceQueryRepository
+{
+  constructor(private readonly db: AppDatabase) {}
+
+  async getByTelegramUserId(
+    telegramUserId: bigint,
+  ): Promise<
+    | { readonly kind: "denied" }
+    | {
+        readonly kind: "ready";
+        readonly balance: {
+          readonly availableCount: number;
+          readonly reservedCount: number;
+        };
+      }
+  > {
+    const [row] = await this.db
+      .select({
+        status: users.status,
+        availableCount: packageBalances.availableCount,
+        reservedCount: packageBalances.reservedCount,
+      })
+      .from(users)
+      .innerJoin(
+        packageBalances,
+        eq(packageBalances.userId, users.id),
+      )
+      .where(eq(users.telegramUserId, telegramUserId))
+      .limit(1);
+
+    if (row === undefined || row.status === "blocked") {
+      return { kind: "denied" };
+    }
+
+    return {
+      kind: "ready",
+      balance: {
+        availableCount: row.availableCount,
+        reservedCount: row.reservedCount,
+      },
+    };
+  }
+}
+
