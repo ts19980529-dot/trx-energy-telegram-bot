@@ -2,6 +2,7 @@ import {
   Bot,
   Context,
   GrammyError,
+  InlineKeyboard,
   HttpError,
   type BotConfig,
 } from "grammy";
@@ -104,6 +105,42 @@ export function createTelegramBot(
     services.purchaseOrderCreation !== undefined &&
     (services.purchaseOrderCreation.isAvailable?.() ?? true);
 
+  const renderInteractive = async (
+    ctx: Context,
+    text: string,
+    keyboard?: InlineKeyboard,
+  ): Promise<void> => {
+    const extra =
+      keyboard === undefined ? {} : { reply_markup: keyboard };
+
+    if (ctx.callbackQuery?.message !== undefined) {
+      try {
+        await ctx.editMessageText(text, extra);
+        return;
+      } catch (error) {
+        if (
+          error instanceof GrammyError &&
+          /message is not modified/i.test(error.description)
+        ) {
+          return;
+        }
+
+        if (
+          !(
+            error instanceof GrammyError &&
+            /message (?:to edit not found|can't be edited)/i.test(
+              error.description,
+            )
+          )
+        ) {
+          throw error;
+        }
+      }
+    }
+
+    await ctx.reply(text, extra);
+  };
+
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === "private") {
       await next();
@@ -150,41 +187,78 @@ export function createTelegramBot(
     });
 
     if (result.kind === "blocked") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
+      return;
+    }
+
+    const balance =
+      services.balanceQuery === undefined
+        ? undefined
+        : await services.balanceQuery.get(BigInt(ctx.from.id));
+
+    if (balance?.kind === "denied") {
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     const energyEnabled = services.energyUsage !== undefined;
-    const purchaseEnabled = purchaseOrderCreationAvailable();
+    const packageCatalogAvailable = result.packages.length > 0;
+    const purchaseEnabled =
+      packageCatalogAvailable && purchaseOrderCreationAvailable();
     const energyHistoryEnabled =
       services.energyOrderQuery !== undefined;
     const purchaseHistoryEnabled =
-      services.purchaseOrderStatus?.listRecent !== undefined;
+      services.purchaseOrderStatus?.listPage !== undefined;
 
     if (
-      result.packages.length === 0 &&
+      !packageCatalogAvailable &&
       !energyEnabled &&
       !energyHistoryEnabled &&
       !purchaseHistoryEnabled
     ) {
-      await ctx.reply("当前暂无可用服务，请稍后再试。");
+      await renderInteractive(
+        ctx,
+        [
+          ...(balance?.kind === "ready"
+            ? [
+                `可用笔数：${balance.balance.availableCount} 笔`,
+                `预留笔数：${balance.balance.reservedCount} 笔`,
+                "",
+              ]
+            : []),
+          "当前暂无可用服务，请稍后再试。",
+        ].join("\n"),
+      );
       return;
     }
 
-    await ctx.reply(
-      energyEnabled
-        ? "请选择服务："
-        : purchaseEnabled
-          ? "能量使用暂未开放，当前可购买笔数套餐。"
-          : "能量使用暂未开放，当前可查看笔数套餐。",
-      {
-        reply_markup: buildMainMenuKeyboard(
-          energyEnabled,
-          purchaseEnabled,
-          energyHistoryEnabled,
-          purchaseHistoryEnabled,
-        ),
-      },
+    const serviceMessage = energyEnabled
+      ? "请选择服务："
+      : purchaseEnabled
+        ? "能量使用暂未开放，当前可购买笔数套餐。"
+        : packageCatalogAvailable
+          ? "能量使用暂未开放，当前可查看笔数套餐。"
+          : "能量使用暂未开放，可查询历史订单。";
+
+    await renderInteractive(
+      ctx,
+      [
+        ...(balance?.kind === "ready"
+          ? [
+              `可用笔数：${balance.balance.availableCount} 笔`,
+              `预留笔数：${balance.balance.reservedCount} 笔`,
+              "",
+            ]
+          : []),
+        serviceMessage,
+      ].join("\n"),
+      buildMainMenuKeyboard(
+        energyEnabled,
+        purchaseEnabled,
+        energyHistoryEnabled,
+        purchaseHistoryEnabled,
+        packageCatalogAvailable,
+      ),
     );
   };
 
