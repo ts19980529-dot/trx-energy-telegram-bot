@@ -6,6 +6,7 @@ import { PurchaseOrderCreationService } from "../application/payments/purchase-o
 import { PurchaseOrderStatusService } from "../application/payments/purchase-order-status-service.js";
 import { UsdtPaymentReconciliationService } from "../application/payments/usdt-payment-reconciliation-service.js";
 import { AdminAccessService } from "../application/telegram/admin-access-service.js";
+import { BalanceQueryService } from "../application/telegram/balance-query-service.js";
 import { PackageSelectionService } from "../application/telegram/package-selection-service.js";
 import { TelegramStartService } from "../application/telegram/start-service.js";
 import { PostgresEnergyProviderAttemptJournal } from "../adapters/database/postgres-energy-provider-attempt-journal.js";
@@ -20,6 +21,7 @@ import {
   PostgresPurchaseOrderRepository,
 } from "../adapters/database/postgres-purchase-order-repository.js";
 import {
+  PostgresBalanceQueryRepository,
   PostgresEnergyPackageRepository,
   PostgresTelegramUserRepository,
 } from "../adapters/database/postgres-telegram-repositories.js";
@@ -150,6 +152,9 @@ async function main(): Promise<void> {
 
     const startService = new TelegramStartService(users, packages);
     const packageSelection = new PackageSelectionService(users, packages);
+    const balanceQuery = new BalanceQueryService(
+      new PostgresBalanceQueryRepository(postgres.db),
+    );
     const adminAccess = new AdminAccessService(
       users,
       config.superAdminId,
@@ -337,6 +342,7 @@ async function main(): Promise<void> {
     const bot = createTelegramBot(botToken, {
       start: startService,
       packageSelection,
+      balanceQuery,
       adminAccess,
       energyOrderQuery,
       ...(energyUsage === undefined ? {} : { energyUsage }),
