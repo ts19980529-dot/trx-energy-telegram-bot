@@ -8,6 +8,7 @@ import type {
 const HOME_MENU_CALLBACK = "menu:home";
 const ENERGY_MENU_CALLBACK = "menu:energy";
 const ENERGY_ORDERS_MENU_CALLBACK = "menu:energy-orders";
+const ENERGY_ORDERS_PAGE_PREFIX = "menu:energy-orders:";
 const PURCHASE_ORDERS_MENU_CALLBACK = "menu:purchase-orders";
 const PACKAGE_MENU_CALLBACK = "menu:packages";
 const ENERGY_CONFIRM_PREFIX = "energy:cf:";
@@ -64,6 +65,59 @@ export function isEnergyMenuCallback(data: string): boolean {
 
 export function isEnergyOrdersMenuCallback(data: string): boolean {
   return data === ENERGY_ORDERS_MENU_CALLBACK;
+}
+
+export interface EnergyOrderPageSelection {
+  readonly direction: "next" | "previous";
+  readonly cursorId: string;
+}
+
+export function energyOrdersPageCallbackData(
+  direction: EnergyOrderPageSelection["direction"],
+  cursorId: string,
+): string {
+  if (!UUID_PATTERN.test(cursorId)) {
+    throw new Error("Energy order cursor is invalid");
+  }
+
+  const code = direction === "next" ? "n" : "p";
+  const value = `${ENERGY_ORDERS_PAGE_PREFIX}${code}:${cursorId}`;
+
+  if (Buffer.byteLength(value, "utf8") > 64) {
+    throw new Error("Energy order page callback exceeds Telegram 64-byte limit");
+  }
+
+  return value;
+}
+
+export function parseEnergyOrdersPageCallbackData(
+  data: string,
+): EnergyOrderPageSelection | undefined {
+  if (!data.startsWith(ENERGY_ORDERS_PAGE_PREFIX)) {
+    return undefined;
+  }
+
+  const payload = data.slice(ENERGY_ORDERS_PAGE_PREFIX.length);
+  const separator = payload.indexOf(":");
+  if (separator <= 0) {
+    return undefined;
+  }
+
+  const directionCode = payload.slice(0, separator);
+  const cursorId = payload.slice(separator + 1);
+  if (!UUID_PATTERN.test(cursorId)) {
+    return undefined;
+  }
+
+  if (directionCode === "n") {
+    return { direction: "next", cursorId };
+  }
+
+  if (directionCode === "p") {
+    return { direction: "previous", cursorId };
+  }
+
+  return undefined;
 }
 
 export function isPurchaseOrdersMenuCallback(data: string): boolean {
@@ -272,16 +326,52 @@ export function energyOrderStatusLabel(
 
 export function buildEnergyOrderListKeyboard(
   orders: readonly EnergyConsumptionSnapshot[],
+  pagination: {
+    readonly previousCursor: string | null;
+    readonly nextCursor: string | null;
+  } = { previousCursor: null, nextCursor: null },
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const order of orders) {
+    const address =
+      order.recipientAddress.length > 11
+        ? `${order.recipientAddress.slice(0, 5)}…${order.recipientAddress.slice(-4)}`
+        : order.recipientAddress;
+
     keyboard
       .text(
-        `${formatEnergyAmount(order.energyAmount)} · ${energyOrderStatusLabel(order.status)}`,
+        `${formatEnergyAmount(order.energyAmount)} · ${address} · ${energyOrderStatusLabel(order.status)}`,
         energyStatusCallbackData(order.id),
       )
       .row();
+  }
+
+  if (
+    pagination.previousCursor !== null ||
+    pagination.nextCursor !== null
+  ) {
+    if (pagination.previousCursor !== null) {
+      keyboard.text(
+        "上一页",
+        energyOrdersPageCallbackData(
+          "previous",
+          pagination.previousCursor,
+        ),
+      );
+    }
+
+    if (pagination.nextCursor !== null) {
+      keyboard.text(
+        "下一页",
+        energyOrdersPageCallbackData(
+          "next",
+          pagination.nextCursor,
+        ),
+      );
+    }
+
+    keyboard.row();
   }
 
   return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
