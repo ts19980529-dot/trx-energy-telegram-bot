@@ -157,31 +157,32 @@ export class PostgresBalanceQueryRepository
         };
       }
   > {
-    const [row] = await this.db
-      .select({
-        status: users.status,
-        availableCount: packageBalances.availableCount,
-        reservedCount: packageBalances.reservedCount,
-      })
+    const [user] = await this.db
+      .select({ id: users.id, status: users.status })
       .from(users)
-      .innerJoin(
-        packageBalances,
-        eq(packageBalances.userId, users.id),
-      )
       .where(eq(users.telegramUserId, telegramUserId))
       .limit(1);
 
-    if (row === undefined || row.status === "blocked") {
+    if (user === undefined || user.status === "blocked") {
       return { kind: "denied" };
+    }
+
+    const [balance] = await this.db
+      .select({
+        availableCount: packageBalances.availableCount,
+        reservedCount: packageBalances.reservedCount,
+      })
+      .from(packageBalances)
+      .where(eq(packageBalances.userId, user.id))
+      .limit(1);
+
+    if (balance === undefined) {
+      throw new Error("Active Telegram user is missing package balance");
     }
 
     return {
       kind: "ready",
-      balance: {
-        availableCount: row.availableCount,
-        reservedCount: row.reservedCount,
-      },
+      balance,
     };
   }
 }
-
