@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   adminRoleLabel,
   buildOrderStatusKeyboard,
+  buildPackageKeyboard,
   buildPaymentMethodKeyboard,
   buildPurchaseOrderListKeyboard,
   formatPurchaseOrderInstructions,
@@ -25,6 +26,22 @@ describe("Telegram package UI", () => {
   it("formats USDT micros without floating-point arithmetic", () => {
     expect(formatUsdtMicros(4_250_000n)).toBe("4.25");
     expect(formatUsdtMicros(4_000_001n)).toBe("4.000001");
+  });
+
+  it("keeps package selection navigable back to home", () => {
+    const labels = buildPackageKeyboard([
+      {
+        id,
+        code: "demo",
+        count: 10,
+        priceUsdtMicros: 17_000_000n,
+      },
+    ]).inline_keyboard.flat().map((button) => button.text);
+
+    expect(labels).toEqual([
+      "10 笔 · 17 USDT",
+      "返回主菜单",
+    ]);
   });
 
   it("builds stable package callback data", () => {
