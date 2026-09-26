@@ -26,7 +26,7 @@ import {
   buildEnergyOrderListKeyboard,
   buildEnergyStatusKeyboard,
   buildHomeKeyboard,
-  buildMainMenuKeyboard,
+  buildPersistentMainMenuKeyboard,
   formatEnergyConfirmation,
   formatEnergyOrder,
   isEnergyMenuCallback,
@@ -34,6 +34,7 @@ import {
   isHomeMenuCallback,
   isPackageMenuCallback,
   isPurchaseOrdersMenuCallback,
+  mainMenuLabels,
   parseEnergyConfirmCallbackData,
   parseEnergyExecuteCallbackData,
   parseEnergyOrdersPageCallbackData,
@@ -79,6 +80,7 @@ export interface TelegramBotServices {
   readonly packageSelection: Pick<PackageSelectionService, "select">;
   readonly balanceQuery?: Pick<BalanceQueryService, "get">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
+  readonly supportTelegramUsername?: string;
   readonly energyPreparation?: Pick<
     EnergyPreparationService,
     "prepare"
@@ -249,26 +251,43 @@ export function createTelegramBot(
           ? "能量使用暂未开放，当前可查看笔数套餐。"
           : "能量使用暂未开放，可查询历史订单。";
 
-    await renderInteractive(
-      ctx,
-      [
-        ...(balance?.kind === "ready"
-          ? [
-              `可用笔数：${balance.balance.availableCount} 笔`,
-              `预留笔数：${balance.balance.reservedCount} 笔`,
-              "",
-            ]
-          : []),
-        serviceMessage,
-      ].join("\n"),
-      buildMainMenuKeyboard(
+    const homeText = [
+      ...(balance?.kind === "ready"
+        ? [
+            `可用笔数：${balance.balance.availableCount} 笔`,
+            `预留笔数：${balance.balance.reservedCount} 笔`,
+            "",
+          ]
+        : []),
+      serviceMessage,
+    ].join("\n");
+    const supportKeyboard =
+      services.supportTelegramUsername === undefined
+        ? undefined
+        : new InlineKeyboard().url(
+            "☎️联系客服",
+            `https://t.me/${services.supportTelegramUsername}`,
+          );
+
+    if (ctx.callbackQuery !== undefined) {
+      await renderInteractive(ctx, homeText, supportKeyboard);
+      return;
+    }
+
+    await ctx.reply(
+      homeText,
+      supportKeyboard === undefined
+        ? {}
+        : { reply_markup: supportKeyboard },
+    );
+    await ctx.reply("主菜单：", {
+      reply_markup: buildPersistentMainMenuKeyboard(
         energyEnabled,
-        purchaseEnabled,
         energyHistoryEnabled,
         purchaseHistoryEnabled,
         packageCatalogAvailable,
       ),
-    );
+    });
   };
 
   handlers.command("start", showMainMenu);
@@ -282,12 +301,10 @@ export function createTelegramBot(
     await showMainMenu(ctx);
   });
 
-  handlers.callbackQuery("menu:packages", async (ctx) => {
-    if (!isPackageMenuCallback(ctx.callbackQuery.data)) {
+  const showPackageMenu = async (ctx: Context): Promise<void> => {
+    if (ctx.from === undefined) {
       return;
     }
-
-    await ctx.answerCallbackQuery();
 
     const result = await services.start.execute({
       telegramUserId: BigInt(ctx.from.id),
@@ -313,15 +330,20 @@ export function createTelegramBot(
       "请选择笔数套餐：",
       buildPackageKeyboard(result.packages),
     );
-  });
+  };
 
-  handlers.callbackQuery("menu:energy", async (ctx) => {
-    if (!isEnergyMenuCallback(ctx.callbackQuery.data)) {
+  handlers.callbackQuery("menu:packages", async (ctx) => {
+    if (!isPackageMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
 
     await ctx.answerCallbackQuery();
+    await showPackageMenu(ctx);
+  });
 
+  handlers.hears(mainMenuLabels.packages, showPackageMenu);
+
+  const showEnergyMenu = async (ctx: Context): Promise<void> => {
     if (energyPreparation === undefined) {
       await renderInteractive(
         ctx,
@@ -336,7 +358,18 @@ export function createTelegramBot(
       "请发送需要接收能量的 TRON 地址。",
       buildHomeKeyboard(),
     );
+  };
+
+  handlers.callbackQuery("menu:energy", async (ctx) => {
+    if (!isEnergyMenuCallback(ctx.callbackQuery.data)) {
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+    await showEnergyMenu(ctx);
   });
+
+  handlers.hears(mainMenuLabels.energy, showEnergyMenu);
 
   const showEnergyOrders = async (
     ctx: Context,
@@ -423,6 +456,10 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
     await showEnergyOrders(ctx, page);
+  });
+
+  handlers.hears(mainMenuLabels.energyOrders, async (ctx) => {
+    await showEnergyOrders(ctx);
   });
 
   const showPurchaseOrders = async (
@@ -514,6 +551,10 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
     await showPurchaseOrders(ctx, page);
+  });
+
+  handlers.hears(mainMenuLabels.purchaseOrders, async (ctx) => {
+    await showPurchaseOrders(ctx);
   });
 
   handlers.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
