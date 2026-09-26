@@ -281,8 +281,13 @@ export function buildPurchaseOrderListKeyboard(
 export function buildOrderStatusKeyboard(
   orderId: string,
   refreshable = true,
+  paymentAddress?: string,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
+
+  if (paymentAddress !== undefined && paymentAddress.trim().length > 0) {
+    keyboard.copyText("📋复制收款地址", paymentAddress).row();
+  }
 
   if (refreshable) {
     keyboard
