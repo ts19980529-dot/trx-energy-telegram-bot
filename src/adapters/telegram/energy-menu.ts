@@ -30,6 +30,7 @@ export function buildMainMenuKeyboard(
   purchaseEnabled: boolean,
   energyHistoryEnabled = energyEnabled,
   purchaseHistoryEnabled = false,
+  packageCatalogAvailable = true,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
@@ -41,12 +42,14 @@ export function buildMainMenuKeyboard(
     keyboard.text("我的能量订单", ENERGY_ORDERS_MENU_CALLBACK).row();
   }
 
-  keyboard
-    .text(
-      purchaseEnabled ? "购买笔数" : "查看笔数套餐",
-      PACKAGE_MENU_CALLBACK,
-    )
-    .row();
+  if (packageCatalogAvailable) {
+    keyboard
+      .text(
+        purchaseEnabled ? "购买笔数" : "查看笔数套餐",
+        PACKAGE_MENU_CALLBACK,
+      )
+      .row();
+  }
 
   if (purchaseHistoryEnabled) {
     keyboard.text("我的支付订单", PURCHASE_ORDERS_MENU_CALLBACK);
@@ -284,7 +287,7 @@ export function formatEnergyConfirmation(input: {
     `当前可用笔数：${input.availableCount} 笔`,
     `当前预留笔数：${input.reservedCount} 笔`,
     "",
-    `确认后将提交能量订单，并按规则预留/扣除 ${input.option.countCost} 笔。`,
+    `确认后将先预留 ${input.option.countCost} 笔；投递成功后正式扣除，投递失败会按规则退回。`,
     "请确认接收地址和能量规格无误。",
   ].join("\n");
 }
