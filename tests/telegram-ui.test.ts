@@ -15,6 +15,8 @@ import {
   packagePaymentCallbackData,
   parsePackageCallbackData,
   parsePackagePaymentCallbackData,
+  parsePurchaseOrdersPageCallbackData,
+  purchaseOrdersPageCallbackData,
 } from "../src/adapters/telegram/package-menu.js";
 
 const id = "123e4567-e89b-12d3-a456-426614174000";
@@ -54,7 +56,11 @@ describe("Telegram package UI", () => {
 
   it("only offers supported payment buttons", () => {
     const buttons = buildPaymentMethodKeyboard(id).inline_keyboard.flat();
-    expect(buttons.map((button) => button.text)).toEqual(["USDT 支付"]);
+    expect(buttons.map((button) => button.text)).toEqual([
+      "USDT 支付",
+      "返回套餐列表",
+      "返回主菜单",
+    ]);
     expect(buttons[0] && "callback_data" in buttons[0] ? buttons[0].callback_data : undefined)
       .toBe(`package:pay:USDT:${id}`);
   });
@@ -117,7 +123,7 @@ describe("Telegram package UI", () => {
         .flat()
         .map((button) => button.text),
     ).toEqual([
-      "10 笔 · 等待付款",
+      "10 笔 · 17.000137U · 等待付款",
       "返回主菜单",
     ]);
 
@@ -131,6 +137,15 @@ describe("Telegram package UI", () => {
       "我的支付订单",
       "返回主菜单",
     ]);
+  });
+
+  it("builds callback-safe purchase history cursors", () => {
+    const cursor = purchaseOrdersPageCallbackData("previous", id);
+    expect(Buffer.byteLength(cursor, "utf8")).toBeLessThanOrEqual(64);
+    expect(parsePurchaseOrdersPageCallbackData(cursor)).toEqual({
+      direction: "previous",
+      cursorId: id,
+    });
   });
 
   it("builds and parses owned order status callback data", () => {
