@@ -4,6 +4,7 @@ import type { TelegramBotServices } from "../src/adapters/telegram/create-bot.js
 import { createTelegramBot } from "../src/adapters/telegram/create-bot.js";
 
 const packageId = "123e4567-e89b-12d3-a456-426614174000";
+const purchaseIntentId = "AbCd123_";
 
 function botInfo() {
   return {
@@ -158,6 +159,70 @@ describe("Telegram adapter", () => {
     expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
   });
 
+  it("shows the ledger-backed package balance on /start", async () => {
+    const bodies: string[] = [];
+    const underlyingFetch = mockFetch([]);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return { kind: "ready", packages: [] };
+        },
+      },
+      balanceQuery: {
+        async get() {
+          return {
+            kind: "ready",
+            balance: {
+              availableCount: 12,
+              reservedCount: 2,
+            },
+          };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/sendMessage")) {
+            bodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 100,
+      message: {
+        message_id: 100,
+        date: 1_700_000_000,
+        chat: privateChat(),
+        from: user(),
+        text: "/start",
+        entities: [{ offset: 0, length: 6, type: "bot_command" }],
+      },
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("可用笔数：12 笔");
+    expect(bodies[0]).toContain("预留笔数：2 笔");
+  });
+
   it("hides unavailable actions from /start and shows read-only package entry", async () => {
     const bodies: string[] = [];
     const bot = createTelegramBot("123456:TEST_TOKEN", {
@@ -166,7 +231,10 @@ describe("Telegram adapter", () => {
       adminAccess: { async getRole() { return undefined; } },
     }, { botInfo: botInfo(), client: { fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.endsWith("/sendMessage")) bodies.push(String(init?.body ?? ""));
+      if (
+        url.endsWith("/sendMessage") ||
+        url.endsWith("/editMessageText")
+      ) bodies.push(String(init?.body ?? ""));
       return mockFetch([])(input, init);
     } } });
     await bot.handleUpdate({ update_id: 101, message: {
@@ -223,7 +291,10 @@ describe("Telegram adapter", () => {
               ? input.toString()
               : input.url;
 
-          if (url.endsWith("/sendMessage")) {
+          if (
+            url.endsWith("/sendMessage") ||
+            url.endsWith("/editMessageText")
+          ) {
             bodies.push(String(init?.body ?? ""));
           }
 
@@ -304,7 +375,10 @@ describe("Telegram adapter", () => {
             : input instanceof URL
               ? input.toString()
               : input.url;
-          if (url.endsWith("/sendMessage")) {
+          if (
+            url.endsWith("/sendMessage") ||
+            url.endsWith("/editMessageText")
+          ) {
             bodies.push(String(init?.body ?? ""));
           }
           return underlyingFetch(input, init);
@@ -418,7 +492,7 @@ describe("Telegram adapter", () => {
     }, { botInfo: botInfo(), client: { fetch: mockFetch(calls) } });
     await bot.handleUpdate({ update_id: 102, callback_query: {
       id: "group-payment", from: user(), chat_instance: "group-instance",
-      data: `package:pay:USDT:${packageId}`,
+      data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
       message: { message_id: 102, date: 1_700_000_000, chat: { id: -1001, type: "supergroup", title: "测试群" } },
     } });
     expect(purchaseInputs).toEqual([]);
@@ -479,10 +553,10 @@ describe("Telegram adapter", () => {
 
     await started;
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(false);
     release();
     await handling;
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 
   it("acknowledges package selection while its database query is pending", async () => {
@@ -524,10 +598,10 @@ describe("Telegram adapter", () => {
 
     await started;
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(false);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(false);
     release();
     await handling;
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 
   it("rechecks access for historical package callbacks and answers denied", async () => {
@@ -586,7 +660,71 @@ describe("Telegram adapter", () => {
     ).toBe(true);
   });
 
-  it("uses one purchase action identity across repeated button presses", async () => {
+  it("fails closed for legacy payment buttons without a purchase intent", async () => {
+    const calls: string[] = [];
+    const purchaseInputs: unknown[] = [];
+    const callbackBodies: string[] = [];
+    const underlyingFetch = mockFetch(calls);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return { kind: "ready", packages: [] };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+      purchaseOrderCreation: {
+        async create(input) {
+          purchaseInputs.push(input);
+          return { kind: "invalid_request" };
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/answerCallbackQuery")) {
+            callbackBodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 250,
+      callback_query: {
+        id: "legacy-payment",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}`,
+        message: {
+          message_id: 25,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(purchaseInputs).toEqual([]);
+    expect(callbackBodies).toHaveLength(1);
+    expect(callbackBodies[0]).toContain("支付操作已更新");
+  });
+
+  it("keeps duplicate purchase presses idempotent and fresh intents distinct", async () => {
     const calls: string[] = [];
     const purchaseInputs: unknown[] = [];
 
@@ -618,7 +756,7 @@ describe("Telegram adapter", () => {
               userId: "33333333-3333-4333-8333-333333333333",
               packageId,
               idempotencyKey:
-                "telegram:purchase:42:42:11",
+                "telegram:purchase:42:AbCd123_",
               status: "waiting_payment",
               payment: {
                 packageCodeSnapshot: "demo",
@@ -659,7 +797,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-1",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 11,
           date: 1_700_000_000,
@@ -674,7 +812,22 @@ describe("Telegram adapter", () => {
         id: "callback-payment-2",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
+        message: {
+          message_id: 99,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 5,
+      callback_query: {
+        id: "callback-payment-fresh-intent",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}:ZyXw987_`,
         message: {
           message_id: 11,
           date: 1_700_000_000,
@@ -683,12 +836,12 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(purchaseInputs).toHaveLength(2);
+    expect(purchaseInputs).toHaveLength(3);
     expect(purchaseInputs[1]).toMatchObject({
       telegramUserId: 42n,
       packageId,
       asset: "USDT",
-      idempotencyKey: "telegram:purchase:42:42:11",
+      idempotencyKey: "telegram:purchase:42:AbCd123_",
       requestedAt: expect.any(Date),
     });
     expect(purchaseInputs[0]).toMatchObject({
@@ -696,13 +849,21 @@ describe("Telegram adapter", () => {
       packageId,
       asset: "USDT",
       idempotencyKey:
-        "telegram:purchase:42:42:11",
+        "telegram:purchase:42:AbCd123_",
+      requestedAt: expect.any(Date),
+    });
+    expect(purchaseInputs[2]).toMatchObject({
+      telegramUserId: 42n,
+      packageId,
+      asset: "USDT",
+      idempotencyKey:
+        "telegram:purchase:42:ZyXw987_",
       requestedAt: expect.any(Date),
     });
     expect(
       calls.some((url) => url.endsWith("/answerCallbackQuery")),
     ).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 
   it("fails closed for new purchases when the payment runtime is unavailable", async () => {
@@ -729,7 +890,7 @@ describe("Telegram adapter", () => {
             : input instanceof URL
               ? input.toString()
               : input.url;
-          if (url.endsWith("/sendMessage")) {
+          if (url.endsWith("/editMessageText")) {
             sentBodies.push(String(init?.body ?? ""));
           }
           return underlyingFetch(input, init);
@@ -743,7 +904,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-unavailable",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 30,
           date: 1_700_000_000,
@@ -796,7 +957,7 @@ describe("Telegram adapter", () => {
         id: "callback-payment-failure",
         from: user(),
         chat_instance: "instance-1",
-        data: `package:pay:USDT:${packageId}`,
+        data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
           message_id: 31,
           date: 1_700_000_000,
@@ -843,9 +1004,14 @@ describe("Telegram adapter", () => {
       },
       adminAccess: { async getRole() { return undefined; } },
       purchaseOrderStatus: {
-        async listRecent(input) {
+        async listPage(input) {
           listInputs.push(input);
-          return { kind: "ready", orders: [order] };
+          return {
+            kind: "ready",
+            orders: [order],
+            previousCursor: null,
+            nextCursor: null,
+          };
         },
         async get(input) {
           getInputs.push(input);
@@ -875,7 +1041,7 @@ describe("Telegram adapter", () => {
     expect(listInputs).toEqual([
       { telegramUserId: 42n, limit: 5 },
     ]);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
 
     await bot.handleUpdate({
       update_id: 303,

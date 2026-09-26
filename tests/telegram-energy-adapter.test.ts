@@ -240,9 +240,14 @@ describe("Telegram Energy adapter", () => {
       "123456:TEST_TOKEN",
       services({
         energyOrderQuery: {
-          async listRecent(input) {
+          async listPage(input) {
             listInputs.push(input);
-            return { kind: "ready", orders: [order] };
+            return {
+              kind: "ready",
+              orders: [order],
+              previousCursor: null,
+              nextCursor: null,
+            };
           },
           async get(input) {
             statusInputs.push(input);
@@ -274,7 +279,7 @@ describe("Telegram Energy adapter", () => {
     expect(listInputs).toEqual([
       { telegramUserId: 42n, limit: 5 },
     ]);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
 
     await bot.handleUpdate({
       update_id: 14,
@@ -385,6 +390,6 @@ describe("Telegram Energy adapter", () => {
       },
     ]);
     expect(calls.some((url) => url.endsWith("/answerCallbackQuery"))).toBe(true);
-    expect(calls.some((url) => url.endsWith("/sendMessage"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/editMessageText"))).toBe(true);
   });
 });

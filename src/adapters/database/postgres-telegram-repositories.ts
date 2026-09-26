@@ -1,5 +1,6 @@
 import { and, asc, eq } from "drizzle-orm";
 
+import type { BalanceQueryRepository } from "../../application/telegram/balance-query-service.js";
 import type {
   EnergyPackageRepository,
   EnergyPackageSummary,
@@ -136,5 +137,52 @@ export class PostgresEnergyPackageRepository
       .limit(1);
 
     return row;
+  }
+}
+
+export class PostgresBalanceQueryRepository
+  implements BalanceQueryRepository
+{
+  constructor(private readonly db: AppDatabase) {}
+
+  async getByTelegramUserId(
+    telegramUserId: bigint,
+  ): Promise<
+    | { readonly kind: "denied" }
+    | {
+        readonly kind: "ready";
+        readonly balance: {
+          readonly availableCount: number;
+          readonly reservedCount: number;
+        };
+      }
+  > {
+    const [user] = await this.db
+      .select({ id: users.id, status: users.status })
+      .from(users)
+      .where(eq(users.telegramUserId, telegramUserId))
+      .limit(1);
+
+    if (user === undefined || user.status === "blocked") {
+      return { kind: "denied" };
+    }
+
+    const [balance] = await this.db
+      .select({
+        availableCount: packageBalances.availableCount,
+        reservedCount: packageBalances.reservedCount,
+      })
+      .from(packageBalances)
+      .where(eq(packageBalances.userId, user.id))
+      .limit(1);
+
+    if (balance === undefined) {
+      throw new Error("Active Telegram user is missing package balance");
+    }
+
+    return {
+      kind: "ready",
+      balance,
+    };
   }
 }

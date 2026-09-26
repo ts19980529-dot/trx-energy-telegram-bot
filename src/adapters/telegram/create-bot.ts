@@ -1,7 +1,10 @@
+import { randomBytes } from "node:crypto";
+
 import {
   Bot,
   Context,
   GrammyError,
+  InlineKeyboard,
   HttpError,
   type BotConfig,
 } from "grammy";
@@ -11,6 +14,7 @@ import type { EnergyUsageService } from "../../application/energy/energy-usage-s
 import type { PurchaseOrderCreationService } from "../../application/payments/purchase-order-service.js";
 import type { PurchaseOrderStatusService } from "../../application/payments/purchase-order-status-service.js";
 import type { AdminAccessService } from "../../application/telegram/admin-access-service.js";
+import type { BalanceQueryService } from "../../application/telegram/balance-query-service.js";
 import type { PackageSelectionService } from "../../application/telegram/package-selection-service.js";
 import type { TelegramStartService } from "../../application/telegram/start-service.js";
 import {
@@ -29,6 +33,7 @@ import {
   isPurchaseOrdersMenuCallback,
   parseEnergyConfirmCallbackData,
   parseEnergyExecuteCallbackData,
+  parseEnergyOrdersPageCallbackData,
   parseEnergyStatusCallbackData,
   parseEnergyUseCallbackData,
 } from "./energy-menu.js";
@@ -36,6 +41,7 @@ import {
   adminRoleLabel,
   buildOrderStatusKeyboard,
   buildPackageKeyboard,
+  buildPackageNavigationKeyboard,
   buildPurchaseOrderListKeyboard,
   buildPaymentMethodKeyboard,
   formatPurchaseOrderInstructions,
@@ -44,11 +50,12 @@ import {
   parseOrderStatusCallbackData,
   parsePackageCallbackData,
   parsePackagePaymentCallbackData,
+  parsePurchaseOrdersPageCallbackData,
   purchaseOrderStatusIsTerminal,
 } from "./package-menu.js";
 
 function callbackActionKey(
-  kind: "purchase" | "energy",
+  kind: "energy",
   userId: number,
   message: { message_id: number; chat: { id: number } } | undefined,
 ): string | undefined {
@@ -67,6 +74,7 @@ export const telegramAllowedUpdates = [
 export interface TelegramBotServices {
   readonly start: Pick<TelegramStartService, "execute">;
   readonly packageSelection: Pick<PackageSelectionService, "select">;
+  readonly balanceQuery?: Pick<BalanceQueryService, "get">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
   readonly energyUsage?: Pick<
     EnergyUsageService,
@@ -74,7 +82,7 @@ export interface TelegramBotServices {
   >;
   readonly energyOrderQuery?: Pick<
     EnergyOrderQueryService,
-    "listRecent" | "get"
+    "listPage" | "get"
   >;
   readonly purchaseOrderCreation?: Pick<
     PurchaseOrderCreationService,
@@ -86,7 +94,7 @@ export interface TelegramBotServices {
     PurchaseOrderStatusService,
     "get"
   > &
-    Partial<Pick<PurchaseOrderStatusService, "listRecent">>;
+    Partial<Pick<PurchaseOrderStatusService, "listPage">>;
 }
 
 export function createTelegramBot(
@@ -98,6 +106,45 @@ export function createTelegramBot(
   const purchaseOrderCreationAvailable = (): boolean =>
     services.purchaseOrderCreation !== undefined &&
     (services.purchaseOrderCreation.isAvailable?.() ?? true);
+
+  const newPurchaseIntentId = (): string =>
+    randomBytes(6).toString("base64url");
+
+  const renderInteractive = async (
+    ctx: Context,
+    text: string,
+    keyboard?: InlineKeyboard,
+  ): Promise<void> => {
+    const extra =
+      keyboard === undefined ? {} : { reply_markup: keyboard };
+
+    if (ctx.callbackQuery?.message !== undefined) {
+      try {
+        await ctx.editMessageText(text, extra);
+        return;
+      } catch (error) {
+        if (
+          error instanceof GrammyError &&
+          /message is not modified/i.test(error.description)
+        ) {
+          return;
+        }
+
+        if (
+          !(
+            error instanceof GrammyError &&
+            /message (?:to edit not found|can't be edited)/i.test(
+              error.description,
+            )
+          )
+        ) {
+          throw error;
+        }
+      }
+    }
+
+    await ctx.reply(text, extra);
+  };
 
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === "private") {
@@ -145,41 +192,78 @@ export function createTelegramBot(
     });
 
     if (result.kind === "blocked") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
+      return;
+    }
+
+    const balance =
+      services.balanceQuery === undefined
+        ? undefined
+        : await services.balanceQuery.get(BigInt(ctx.from.id));
+
+    if (balance?.kind === "denied") {
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     const energyEnabled = services.energyUsage !== undefined;
-    const purchaseEnabled = purchaseOrderCreationAvailable();
+    const packageCatalogAvailable = result.packages.length > 0;
+    const purchaseEnabled =
+      packageCatalogAvailable && purchaseOrderCreationAvailable();
     const energyHistoryEnabled =
       services.energyOrderQuery !== undefined;
     const purchaseHistoryEnabled =
-      services.purchaseOrderStatus?.listRecent !== undefined;
+      services.purchaseOrderStatus?.listPage !== undefined;
 
     if (
-      result.packages.length === 0 &&
+      !packageCatalogAvailable &&
       !energyEnabled &&
       !energyHistoryEnabled &&
       !purchaseHistoryEnabled
     ) {
-      await ctx.reply("当前暂无可用服务，请稍后再试。");
+      await renderInteractive(
+        ctx,
+        [
+          ...(balance?.kind === "ready"
+            ? [
+                `可用笔数：${balance.balance.availableCount} 笔`,
+                `预留笔数：${balance.balance.reservedCount} 笔`,
+                "",
+              ]
+            : []),
+          "当前暂无可用服务，请稍后再试。",
+        ].join("\n"),
+      );
       return;
     }
 
-    await ctx.reply(
-      energyEnabled
-        ? "请选择服务："
-        : purchaseEnabled
-          ? "能量使用暂未开放，当前可购买笔数套餐。"
-          : "能量使用暂未开放，当前可查看笔数套餐。",
-      {
-        reply_markup: buildMainMenuKeyboard(
-          energyEnabled,
-          purchaseEnabled,
-          energyHistoryEnabled,
-          purchaseHistoryEnabled,
-        ),
-      },
+    const serviceMessage = energyEnabled
+      ? "请选择服务："
+      : purchaseEnabled
+        ? "能量使用暂未开放，当前可购买笔数套餐。"
+        : packageCatalogAvailable
+          ? "能量使用暂未开放，当前可查看笔数套餐。"
+          : "能量使用暂未开放，可查询历史订单。";
+
+    await renderInteractive(
+      ctx,
+      [
+        ...(balance?.kind === "ready"
+          ? [
+              `可用笔数：${balance.balance.availableCount} 笔`,
+              `预留笔数：${balance.balance.reservedCount} 笔`,
+              "",
+            ]
+          : []),
+        serviceMessage,
+      ].join("\n"),
+      buildMainMenuKeyboard(
+        energyEnabled,
+        purchaseEnabled,
+        energyHistoryEnabled,
+        purchaseHistoryEnabled,
+        packageCatalogAvailable,
+      ),
     );
   };
 
@@ -207,18 +291,24 @@ export function createTelegramBot(
     });
 
     if (result.kind === "blocked") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     if (result.packages.length === 0) {
-      await ctx.reply("当前暂无可用套餐。");
+      await renderInteractive(
+        ctx,
+        "当前暂无可用套餐。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply("请选择笔数套餐：", {
-      reply_markup: buildPackageKeyboard(result.packages),
-    });
+    await renderInteractive(
+      ctx,
+      "请选择笔数套餐：",
+      buildPackageKeyboard(result.packages),
+    );
   });
 
   handlers.callbackQuery("menu:energy", async (ctx) => {
@@ -229,90 +319,197 @@ export function createTelegramBot(
     await ctx.answerCallbackQuery();
 
     if (services.energyUsage === undefined) {
-      await ctx.reply("当前能量服务尚未启用。");
+      await renderInteractive(
+        ctx,
+        "当前能量服务尚未启用。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply("请发送需要接收能量的 TRON 地址。", {
-      reply_markup: buildHomeKeyboard(),
-    });
+    await renderInteractive(
+      ctx,
+      "请发送需要接收能量的 TRON 地址。",
+      buildHomeKeyboard(),
+    );
   });
+
+  const showEnergyOrders = async (
+    ctx: Context,
+    page?: {
+      readonly direction: "next" | "previous";
+      readonly cursorId: string;
+    },
+  ): Promise<void> => {
+    if (ctx.from === undefined || services.energyOrderQuery === undefined) {
+      await renderInteractive(
+        ctx,
+        "能量订单查询暂不可用。",
+        buildHomeKeyboard(),
+      );
+      return;
+    }
+
+    let result = await services.energyOrderQuery.listPage({
+      telegramUserId: BigInt(ctx.from.id),
+      limit: 5,
+      ...(page === undefined
+        ? {}
+        : {
+            cursorId: page.cursorId,
+            direction: page.direction,
+          }),
+    });
+
+    if (
+      result.kind === "ready" &&
+      result.orders.length === 0 &&
+      page !== undefined
+    ) {
+      result = await services.energyOrderQuery.listPage({
+        telegramUserId: BigInt(ctx.from.id),
+        limit: 5,
+      });
+    }
+
+    if (result.kind === "denied") {
+      await renderInteractive(ctx, "账号当前不可用。");
+      return;
+    }
+
+    if (result.orders.length === 0) {
+      await renderInteractive(
+        ctx,
+        "暂无能量订单。",
+        buildHomeKeyboard(),
+      );
+      return;
+    }
+
+    await renderInteractive(
+      ctx,
+      "我的能量订单：",
+      buildEnergyOrderListKeyboard(result.orders, {
+        previousCursor: result.previousCursor,
+        nextCursor: result.nextCursor,
+      }),
+    );
+  };
 
   handlers.callbackQuery("menu:energy-orders", async (ctx) => {
     if (!isEnergyOrdersMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
 
-    if (services.energyOrderQuery === undefined) {
+    await ctx.answerCallbackQuery();
+    await showEnergyOrders(ctx);
+  });
+
+  handlers.callbackQuery(/^menu:energy-orders:/, async (ctx) => {
+    const page = parseEnergyOrdersPageCallbackData(
+      ctx.callbackQuery.data,
+    );
+    if (page === undefined) {
       await ctx.answerCallbackQuery({
-        text: "能量订单查询暂不可用。",
+        text: "订单翻页操作已失效。",
         show_alert: true,
       });
       return;
     }
 
     await ctx.answerCallbackQuery();
+    await showEnergyOrders(ctx, page);
+  });
 
-    const result = await services.energyOrderQuery.listRecent({
+  const showPurchaseOrders = async (
+    ctx: Context,
+    page?: {
+      readonly direction: "next" | "previous";
+      readonly cursorId: string;
+    },
+  ): Promise<void> => {
+    if (
+      ctx.from === undefined ||
+      services.purchaseOrderStatus === undefined ||
+      services.purchaseOrderStatus.listPage === undefined
+    ) {
+      await renderInteractive(
+        ctx,
+        "支付订单查询暂不可用。",
+        buildHomeKeyboard(),
+      );
+      return;
+    }
+
+    let result = await services.purchaseOrderStatus.listPage({
       telegramUserId: BigInt(ctx.from.id),
       limit: 5,
+      ...(page === undefined
+        ? {}
+        : {
+            cursorId: page.cursorId,
+            direction: page.direction,
+          }),
     });
 
+    if (
+      result.kind === "ready" &&
+      result.orders.length === 0 &&
+      page !== undefined
+    ) {
+      result = await services.purchaseOrderStatus.listPage({
+        telegramUserId: BigInt(ctx.from.id),
+        limit: 5,
+      });
+    }
+
     if (result.kind === "denied") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     if (result.orders.length === 0) {
-      await ctx.reply("暂无能量订单。", {
-        reply_markup: buildHomeKeyboard(),
-      });
+      await renderInteractive(
+        ctx,
+        "暂无支付订单。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply("最近能量订单：", {
-      reply_markup: buildEnergyOrderListKeyboard(result.orders),
-    });
-  });
+    await renderInteractive(
+      ctx,
+      "我的支付订单：",
+      buildPurchaseOrderListKeyboard(result.orders, {
+        previousCursor: result.previousCursor,
+        nextCursor: result.nextCursor,
+      }),
+    );
+  };
 
   handlers.callbackQuery("menu:purchase-orders", async (ctx) => {
     if (!isPurchaseOrdersMenuCallback(ctx.callbackQuery.data)) {
       return;
     }
 
-    if (
-      services.purchaseOrderStatus === undefined ||
-      services.purchaseOrderStatus.listRecent === undefined
-    ) {
+    await ctx.answerCallbackQuery();
+    await showPurchaseOrders(ctx);
+  });
+
+  handlers.callbackQuery(/^menu:purchase-orders:/, async (ctx) => {
+    const page = parsePurchaseOrdersPageCallbackData(
+      ctx.callbackQuery.data,
+    );
+    if (page === undefined) {
       await ctx.answerCallbackQuery({
-        text: "支付订单查询暂不可用。",
+        text: "订单翻页操作已失效。",
         show_alert: true,
       });
       return;
     }
 
     await ctx.answerCallbackQuery();
-
-    const result = await services.purchaseOrderStatus.listRecent({
-      telegramUserId: BigInt(ctx.from.id),
-      limit: 5,
-    });
-
-    if (result.kind === "denied") {
-      await ctx.reply("账号当前不可用。");
-      return;
-    }
-
-    if (result.orders.length === 0) {
-      await ctx.reply("暂无支付订单。", {
-        reply_markup: buildHomeKeyboard(),
-      });
-      return;
-    }
-
-    await ctx.reply("最近支付订单：", {
-      reply_markup: buildPurchaseOrderListKeyboard(result.orders),
-    });
+    await showPurchaseOrders(ctx, page);
   });
 
   handlers.hears(/^(?:T\S{20,50}|41[0-9A-Za-z]{20,70})$/, async (ctx) => {
@@ -338,10 +535,14 @@ export function createTelegramBot(
 
     switch (result.kind) {
       case "denied":
-        await ctx.reply("账号当前不可用。");
+        await renderInteractive(ctx, "账号当前不可用。");
         return;
       case "invalid_address":
-        await ctx.reply("TRON 地址无效，请重新发送。");
+        await renderInteractive(
+          ctx,
+          "TRON 地址无效，请重新发送。",
+          buildHomeKeyboard(),
+        );
         return;
       case "ready":
         if (result.options.length === 0) {
@@ -409,30 +610,35 @@ export function createTelegramBot(
         );
 
         if (option === undefined) {
-          await ctx.reply("该能量规格已下架或不存在。");
-          return;
-        }
-
-        if (result.availableCount < option.countCost) {
-          await ctx.reply(
-            `可用笔数不足：当前 ${result.availableCount} 笔，需要 ${option.countCost} 笔。请先购买笔数。`,
+          await renderInteractive(
+            ctx,
+            "该能量规格已下架或不存在。",
+            buildHomeKeyboard(),
           );
           return;
         }
 
-        await ctx.reply(
+        if (result.availableCount < option.countCost) {
+          await renderInteractive(
+            ctx,
+            `可用笔数不足：当前 ${result.availableCount} 笔，需要 ${option.countCost} 笔。请先购买笔数。`,
+            buildHomeKeyboard(),
+          );
+          return;
+        }
+
+        await renderInteractive(
+          ctx,
           formatEnergyConfirmation({
             recipientAddress: result.recipientAddress,
             option,
             availableCount: result.availableCount,
             reservedCount: result.reservedCount,
           }),
-          {
-            reply_markup: buildEnergyConfirmationKeyboard(
-              option.code,
-              result.recipientAddress,
-            ),
-          },
+          buildEnergyConfirmationKeyboard(
+            option.code,
+            result.recipientAddress,
+          ),
         );
         return;
       }
@@ -502,34 +708,54 @@ export function createTelegramBot(
 
     switch (result.kind) {
       case "denied":
-        await ctx.reply("账号当前不可用。");
+        await renderInteractive(ctx, "账号当前不可用。");
         return;
       case "invalid_address":
-        await ctx.reply("TRON 地址无效，请重新发送。");
+        await renderInteractive(
+          ctx,
+          "TRON 地址无效，请重新发送。",
+          buildHomeKeyboard(),
+        );
         return;
       case "option_unavailable":
-        await ctx.reply("该能量规格已下架或不存在。");
+        await renderInteractive(
+          ctx,
+          "该能量规格已下架或不存在。",
+          buildHomeKeyboard(),
+        );
         return;
       case "insufficient_balance":
-        await ctx.reply(
+        await renderInteractive(
+          ctx,
           `可用笔数不足：当前 ${result.availableCount} 笔，需要 ${result.requiredCount} 笔。请先购买笔数。`,
+          buildHomeKeyboard(),
         );
         return;
       case "conflict":
-        await ctx.reply("本次能量操作状态冲突，请重新发起。");
+        await renderInteractive(
+          ctx,
+          "本次能量操作状态冲突，请重新发起。",
+          buildHomeKeyboard(),
+        );
         return;
       case "not_found":
-        await ctx.reply("能量订单不存在。");
+        await renderInteractive(
+          ctx,
+          "能量订单不存在。",
+          buildHomeKeyboard(),
+        );
         return;
       case "completed":
       case "released":
       case "processing":
-        await ctx.reply(formatEnergyOrder(result.order), {
-          reply_markup: buildEnergyStatusKeyboard(
+        await renderInteractive(
+          ctx,
+          formatEnergyOrder(result.order),
+          buildEnergyStatusKeyboard(
             result.order.id,
             result.kind === "processing",
           ),
-        });
+        );
         return;
     }
   });
@@ -581,7 +807,11 @@ export function createTelegramBot(
     });
 
     if (result.kind === "not_found") {
-      await ctx.reply("能量订单不存在或无权查看。");
+      await renderInteractive(
+        ctx,
+        "能量订单不存在或无权查看。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 
@@ -628,29 +858,38 @@ export function createTelegramBot(
     });
 
     if (result.kind === "denied") {
-      await ctx.reply("账号当前不可用。");
+      await renderInteractive(ctx, "账号当前不可用。");
       return;
     }
 
     if (result.kind === "unavailable") {
-      await ctx.reply("套餐已下架或不存在。");
+      await renderInteractive(
+        ctx,
+        "套餐已下架或不存在。",
+        buildPackageNavigationKeyboard(),
+      );
       return;
     }
 
-    await ctx.reply(
+    const paymentEnabled = purchaseOrderCreationAvailable();
+    await renderInteractive(
+      ctx,
       [
         "套餐详情",
         "",
         `笔数：${result.package.count} 笔`,
         `价格：${formatUsdtMicros(result.package.priceUsdtMicros)} USDT`,
         "",
-        !purchaseOrderCreationAvailable()
-          ? "支付功能暂未开放，可先查看套餐信息。"
-          : "请选择支付方式：",
+        paymentEnabled
+          ? "请选择支付方式："
+          : "支付功能暂未开放，可先查看套餐信息。",
       ].join("\n"),
-      !purchaseOrderCreationAvailable()
-        ? {}
-        : { reply_markup: buildPaymentMethodKeyboard(result.package.id) },
+      paymentEnabled
+        ? buildPaymentMethodKeyboard(
+            result.package.id,
+            newPurchaseIntentId(),
+          )
+        : buildPackageNavigationKeyboard(),
     );
   });
 
@@ -661,7 +900,7 @@ export function createTelegramBot(
 
     if (selection === undefined) {
       await ctx.answerCallbackQuery({
-        text: "无效支付操作。",
+        text: "支付操作已更新，请重新选择套餐。",
         show_alert: true,
       });
       return;
@@ -675,24 +914,17 @@ export function createTelegramBot(
       return;
     }
 
-    const idempotencyKey = callbackActionKey(
-      "purchase",
-      ctx.from.id,
-      ctx.callbackQuery.message,
-    );
-
-    if (idempotencyKey === undefined) {
-      await ctx.answerCallbackQuery({
-        text: "操作消息已失效，请重新打开菜单。",
-        show_alert: true,
-      });
-      return;
-    }
+    const idempotencyKey =
+      `telegram:purchase:${ctx.from.id}:${selection.purchaseIntentId}`;
 
     await ctx.answerCallbackQuery();
 
     if (services.purchaseOrderCreation === undefined) {
-      await ctx.reply("当前支付功能尚未启用。");
+      await renderInteractive(
+        ctx,
+        "当前支付功能尚未启用。",
+        buildPackageNavigationKeyboard(),
+      );
       return;
     }
 
@@ -706,42 +938,63 @@ export function createTelegramBot(
 
     switch (result.kind) {
       case "service_unavailable":
-        await ctx.reply(
+        await renderInteractive(
+          ctx,
           "支付服务当前不可用，暂时不会创建新的支付订单。已有订单仍可查询状态。",
+          buildPackageNavigationKeyboard(),
         );
         return;
       case "ready":
-        await ctx.reply(
+        await renderInteractive(
+          ctx,
           formatPurchaseOrderInstructions(result.order),
-          {
-            reply_markup: buildOrderStatusKeyboard(
-              result.order.id,
-            ),
-          },
+          buildOrderStatusKeyboard(result.order.id),
         );
         return;
       case "denied":
-        await ctx.reply("账号当前不可用。");
+        await renderInteractive(ctx, "账号当前不可用。");
         return;
       case "package_unavailable":
-        await ctx.reply("套餐已下架或不存在。");
+        await renderInteractive(
+          ctx,
+          "套餐已下架或不存在。",
+          buildPackageNavigationKeyboard(),
+        );
         return;
       case "unsupported_asset":
-        await ctx.reply(`${result.asset} 支付尚未启用。`);
+        await renderInteractive(
+          ctx,
+          `${result.asset} 支付尚未启用。`,
+          buildPackageNavigationKeyboard(),
+        );
         return;
       case "quote_unavailable":
-        await ctx.reply("当前无法获取支付报价，请稍后重试。");
+        await renderInteractive(
+          ctx,
+          "当前无法获取支付报价，请稍后重试。",
+          buildPackageNavigationKeyboard(),
+        );
         return;
       case "payment_attribution_unavailable":
-        await ctx.reply(
+        await renderInteractive(
+          ctx,
           "当前 USDT 支付通道暂不可用，请稍后重试或联系客服。",
+          buildPackageNavigationKeyboard(),
         );
         return;
       case "idempotency_conflict":
-        await ctx.reply("本次支付操作状态冲突，请返回套餐重新发起。");
+        await renderInteractive(
+          ctx,
+          "本次支付操作状态冲突，请返回套餐重新发起。",
+          buildPackageNavigationKeyboard(),
+        );
         return;
       case "invalid_request":
-        await ctx.reply("支付请求无效，请返回套餐重新选择。");
+        await renderInteractive(
+          ctx,
+          "支付请求无效，请返回套餐重新选择。",
+          buildPackageNavigationKeyboard(),
+        );
         return;
     }
   });
@@ -775,7 +1028,11 @@ export function createTelegramBot(
     });
 
     if (result.kind === "not_found") {
-      await ctx.reply("订单不存在或无权查看。");
+      await renderInteractive(
+        ctx,
+        "订单不存在或无权查看。",
+        buildHomeKeyboard(),
+      );
       return;
     }
 

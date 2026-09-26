@@ -246,12 +246,12 @@ describe("Telegram Energy confirmation flow", () => {
     ]);
     expect(executeInputs).toEqual([]);
 
-    const sent = requests.find((request) =>
-      request.url.endsWith("/sendMessage"),
+    const rendered = requests.find((request) =>
+      request.url.endsWith("/editMessageText"),
     );
-    expect(sent?.body?.text).toContain("确认使用能量");
+    expect(rendered?.body?.text).toContain("确认使用能量");
 
-    const replyMarkup = sent?.body?.reply_markup as
+    const replyMarkup = rendered?.body?.reply_markup as
       | { inline_keyboard?: Array<Array<{ callback_data?: string }>> }
       | undefined;
     expect(replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data)

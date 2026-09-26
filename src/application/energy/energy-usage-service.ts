@@ -79,16 +79,6 @@ export interface EnergyUsageRepository {
     idempotencyKey: string;
     providerName: string | null;
   }[]>;
-  listOwned?(
-    telegramUserId: bigint,
-    limit: number,
-  ): Promise<
-    | { readonly kind: "denied" }
-    | {
-        readonly kind: "ready";
-        readonly orders: readonly EnergyConsumptionSnapshot[];
-      }
-  >;
   prepare(telegramUserId: bigint): Promise<EnergyPreparationResult>;
 
   reserve(input: {

@@ -273,7 +273,7 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
     });
   });
 
-  it("lists only recent Energy orders owned by the requesting Telegram user", async () => {
+  it("pages only Energy orders owned by the requesting Telegram user", async () => {
     const ownerTelegramUserId = 9_200_000_000_021n;
     const otherTelegramUserId = 9_200_000_000_022n;
     const ownerUserId = await customer(ownerTelegramUserId, 3);
@@ -306,30 +306,69 @@ describePostgres("PostgreSQL Energy consumption integration", () => {
       throw new Error("Expected owned-list Energy reservations");
     }
 
-    const ownerOrders = await energy.listOwned(ownerTelegramUserId, 5);
-    expect(ownerOrders.kind).toBe("ready");
-    if (ownerOrders.kind !== "ready") {
-      throw new Error("Expected owner recent Energy orders");
+    const first = await energy.listOwnedPage({
+      telegramUserId: ownerTelegramUserId,
+      limit: 1,
+    });
+    expect(first.kind).toBe("ready");
+    if (first.kind !== "ready") {
+      throw new Error("Expected owner first Energy page");
     }
+    expect(first.orders).toHaveLength(1);
+    expect(first.previousCursor).toBeNull();
+    expect(first.nextCursor).not.toBeNull();
 
-    expect(ownerOrders.orders).toHaveLength(2);
-    expect(new Set(ownerOrders.orders.map((order) => order.id))).toEqual(
+    const second = await energy.listOwnedPage({
+      telegramUserId: ownerTelegramUserId,
+      limit: 1,
+      cursorId: first.nextCursor!,
+      direction: "next",
+    });
+    expect(second.kind).toBe("ready");
+    if (second.kind !== "ready") {
+      throw new Error("Expected owner second Energy page");
+    }
+    expect(second.orders).toHaveLength(1);
+    expect(second.previousCursor).not.toBeNull();
+
+    expect(
+      new Set([
+        first.orders[0]!.id,
+        second.orders[0]!.id,
+      ]),
+    ).toEqual(
       new Set([ownerFirst.order.id, ownerSecond.order.id]),
     );
-    expect(ownerOrders.orders.every((order) => order.userId === ownerUserId))
-      .toBe(true);
-    expect(ownerOrders.orders.some((order) => order.userId === otherUserId))
-      .toBe(false);
+    expect(
+      [...first.orders, ...second.orders].every(
+        (order) => order.userId === ownerUserId,
+      ),
+    ).toBe(true);
+    expect(
+      [...first.orders, ...second.orders].some(
+        (order) => order.userId === otherUserId,
+      ),
+    ).toBe(false);
 
-    const limited = await energy.listOwned(ownerTelegramUserId, 1);
-    expect(limited.kind).toBe("ready");
-    if (limited.kind !== "ready") {
-      throw new Error("Expected limited owner recent Energy orders");
+    const back = await energy.listOwnedPage({
+      telegramUserId: ownerTelegramUserId,
+      limit: 1,
+      cursorId: second.previousCursor!,
+      direction: "previous",
+    });
+    expect(back.kind).toBe("ready");
+    if (back.kind !== "ready") {
+      throw new Error("Expected owner previous Energy page");
     }
-    expect(limited.orders).toHaveLength(1);
+    expect(back.orders.map((order) => order.id)).toEqual(
+      first.orders.map((order) => order.id),
+    );
 
     await expect(
-      energy.listOwned(9_200_000_009_999n, 5),
+      energy.listOwnedPage({
+        telegramUserId: 9_200_000_009_999n,
+        limit: 5,
+      }),
     ).resolves.toEqual({ kind: "denied" });
   });
 

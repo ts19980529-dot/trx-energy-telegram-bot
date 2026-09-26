@@ -10,13 +10,17 @@ const PACKAGE_CALLBACK_PREFIX = "package:view:";
 const PACKAGE_PAYMENT_CALLBACK_PREFIX = "package:pay:";
 const ORDER_STATUS_CALLBACK_PREFIX = "order:status:";
 const PURCHASE_ORDERS_MENU_CALLBACK = "menu:purchase-orders";
+const PURCHASE_ORDERS_PAGE_PREFIX = "menu:purchase-orders:";
+const PACKAGE_MENU_CALLBACK = "menu:packages";
 const HOME_MENU_CALLBACK = "menu:home";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PURCHASE_INTENT_PATTERN = /^[A-Za-z0-9_-]{8}$/;
 
 export interface PackagePaymentSelection {
   readonly asset: PaymentAsset;
   readonly packageId: string;
+  readonly purchaseIntentId: string;
 }
 
 function formatSixDecimalAtomic(value: bigint): string {
@@ -68,8 +72,24 @@ export function parsePackageCallbackData(data: string): string | undefined {
 export function packagePaymentCallbackData(
   id: string,
   asset: PaymentAsset,
+  purchaseIntentId: string,
 ): string {
-  return `${PACKAGE_PAYMENT_CALLBACK_PREFIX}${asset}:${id}`;
+  if (!UUID_PATTERN.test(id)) {
+    throw new Error("Package ID is not callback-safe");
+  }
+
+  if (!PURCHASE_INTENT_PATTERN.test(purchaseIntentId)) {
+    throw new Error("Purchase intent ID is not callback-safe");
+  }
+
+  const value =
+    `${PACKAGE_PAYMENT_CALLBACK_PREFIX}${asset}:${id}:${purchaseIntentId}`;
+
+  if (Buffer.byteLength(value, "utf8") > 64) {
+    throw new Error("Package payment callback exceeds Telegram 64-byte limit");
+  }
+
+  return value;
 }
 
 export function parsePackagePaymentCallbackData(
@@ -80,18 +100,20 @@ export function parsePackagePaymentCallbackData(
   }
 
   const payload = data.slice(PACKAGE_PAYMENT_CALLBACK_PREFIX.length);
-  const separator = payload.indexOf(":");
+  const parts = payload.split(":");
 
-  if (separator <= 0) {
+  if (parts.length !== 3) {
     return undefined;
   }
 
-  const assetRaw = payload.slice(0, separator);
-  const packageId = payload.slice(separator + 1);
+  const [assetRaw, packageId, purchaseIntentId] = parts;
 
   if (
     (assetRaw !== "USDT" && assetRaw !== "TRX") ||
-    !UUID_PATTERN.test(packageId)
+    packageId === undefined ||
+    purchaseIntentId === undefined ||
+    !UUID_PATTERN.test(packageId) ||
+    !PURCHASE_INTENT_PATTERN.test(purchaseIntentId)
   ) {
     return undefined;
   }
@@ -99,6 +121,7 @@ export function parsePackagePaymentCallbackData(
   return {
     asset: assetRaw,
     packageId,
+    purchaseIntentId,
   };
 }
 
@@ -111,7 +134,14 @@ export function buildPackageKeyboard(
     keyboard.text(packageButtonLabel(item), packageCallbackData(item.id)).row();
   }
 
-  return keyboard;
+  return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
+}
+
+export function buildPackageNavigationKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("返回套餐列表", PACKAGE_MENU_CALLBACK)
+    .row()
+    .text("返回主菜单", HOME_MENU_CALLBACK);
 }
 
 export function orderStatusCallbackData(orderId: string): string {
@@ -130,18 +160,107 @@ export function parseOrderStatusCallbackData(
   return UUID_PATTERN.test(id) ? id : undefined;
 }
 
+export interface PurchaseOrderPageSelection {
+  readonly direction: "next" | "previous";
+  readonly cursorId: string;
+}
+
+export function purchaseOrdersPageCallbackData(
+  direction: PurchaseOrderPageSelection["direction"],
+  cursorId: string,
+): string {
+  if (!UUID_PATTERN.test(cursorId)) {
+    throw new Error("Purchase order cursor is invalid");
+  }
+
+  const code = direction === "next" ? "n" : "p";
+  const value = `${PURCHASE_ORDERS_PAGE_PREFIX}${code}:${cursorId}`;
+
+  if (Buffer.byteLength(value, "utf8") > 64) {
+    throw new Error("Purchase order page callback exceeds Telegram 64-byte limit");
+  }
+
+  return value;
+}
+
+export function parsePurchaseOrdersPageCallbackData(
+  data: string,
+): PurchaseOrderPageSelection | undefined {
+  if (!data.startsWith(PURCHASE_ORDERS_PAGE_PREFIX)) {
+    return undefined;
+  }
+
+  const payload = data.slice(PURCHASE_ORDERS_PAGE_PREFIX.length);
+  const separator = payload.indexOf(":");
+  if (separator <= 0) {
+    return undefined;
+  }
+
+  const directionCode = payload.slice(0, separator);
+  const cursorId = payload.slice(separator + 1);
+  if (!UUID_PATTERN.test(cursorId)) {
+    return undefined;
+  }
+
+  if (directionCode === "n") {
+    return { direction: "next", cursorId };
+  }
+
+  if (directionCode === "p") {
+    return { direction: "previous", cursorId };
+  }
+
+  return undefined;
+}
+
 export function buildPurchaseOrderListKeyboard(
   orders: readonly PurchaseOrderStatusView[],
+  pagination: {
+    readonly previousCursor: string | null;
+    readonly nextCursor: string | null;
+  } = { previousCursor: null, nextCursor: null },
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const order of orders) {
+    const amount =
+      order.payment.paymentAsset === "USDT"
+        ? `${formatUsdtMicros(order.payment.quotedAmountAtomic)}U`
+        : `${formatTrxSun(order.payment.quotedAmountAtomic)} TRX`;
+
     keyboard
       .text(
-        `${order.payment.countSnapshot} 笔 · ${purchaseOrderStatusLabel(order.status)}`,
+        `${order.payment.countSnapshot} 笔 · ${amount} · ${purchaseOrderStatusLabel(order.status)}`,
         orderStatusCallbackData(order.id),
       )
       .row();
+  }
+
+  if (
+    pagination.previousCursor !== null ||
+    pagination.nextCursor !== null
+  ) {
+    if (pagination.previousCursor !== null) {
+      keyboard.text(
+        "上一页",
+        purchaseOrdersPageCallbackData(
+          "previous",
+          pagination.previousCursor,
+        ),
+      );
+    }
+
+    if (pagination.nextCursor !== null) {
+      keyboard.text(
+        "下一页",
+        purchaseOrdersPageCallbackData(
+          "next",
+          pagination.nextCursor,
+        ),
+      );
+    }
+
+    keyboard.row();
   }
 
   return keyboard.text("返回主菜单", HOME_MENU_CALLBACK);
@@ -170,11 +289,21 @@ export function buildOrderStatusKeyboard(
 
 export function buildPaymentMethodKeyboard(
   packageId: string,
+  purchaseIntentId: string,
 ): InlineKeyboard {
-  return new InlineKeyboard().text(
-    "USDT 支付",
-    packagePaymentCallbackData(packageId, "USDT"),
-  );
+  return new InlineKeyboard()
+    .text(
+      "USDT 支付",
+      packagePaymentCallbackData(
+        packageId,
+        "USDT",
+        purchaseIntentId,
+      ),
+    )
+    .row()
+    .text("返回套餐列表", PACKAGE_MENU_CALLBACK)
+    .row()
+    .text("返回主菜单", HOME_MENU_CALLBACK);
 }
 
 function formatUtcTimestamp(value: Date | null): string {

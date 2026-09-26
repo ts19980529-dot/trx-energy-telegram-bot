@@ -139,24 +139,32 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
     return rows;
   }
 
-  async listOwned(
-    telegramUserId: bigint,
-    limit: number,
-  ): Promise<
+  async listOwnedPage(input: {
+    readonly telegramUserId: bigint;
+    readonly limit: number;
+    readonly cursorId?: string;
+    readonly direction?: "next" | "previous";
+  }): Promise<
     | { readonly kind: "denied" }
     | {
         readonly kind: "ready";
         readonly orders: readonly EnergyConsumptionSnapshot[];
+        readonly previousCursor: string | null;
+        readonly nextCursor: string | null;
       }
   > {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 10
+    ) {
       throw new Error("Energy owned-order limit must be between 1 and 10");
     }
 
     const [user] = await this.db
       .select({ id: users.id, status: users.status })
       .from(users)
-      .where(eq(users.telegramUserId, telegramUserId))
+      .where(eq(users.telegramUserId, input.telegramUserId))
       .limit(1);
 
     if (user === undefined || user.status === "blocked") {
@@ -173,18 +181,67 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       throw new Error("Active Energy customer is missing package balance");
     }
 
-    const orders = await this.db
-      .select()
-      .from(energyConsumptionOrders)
-      .where(eq(energyConsumptionOrders.userId, user.id))
-      .orderBy(
-        desc(energyConsumptionOrders.createdAt),
-        desc(energyConsumptionOrders.id),
-      )
-      .limit(limit);
+    const hasCursor = input.cursorId !== undefined;
+    const pageCondition =
+      !hasCursor
+        ? eq(energyConsumptionOrders.userId, user.id)
+        : and(
+            eq(energyConsumptionOrders.userId, user.id),
+            input.direction === "previous"
+              ? sql`(${energyConsumptionOrders.createdAt}, ${energyConsumptionOrders.id}) > (
+                  SELECT "created_at", "id"
+                  FROM "energy_consumption_orders"
+                  WHERE "id" = ${input.cursorId}
+                    AND "user_id" = ${user.id}
+                )`
+              : sql`(${energyConsumptionOrders.createdAt}, ${energyConsumptionOrders.id}) < (
+                  SELECT "created_at", "id"
+                  FROM "energy_consumption_orders"
+                  WHERE "id" = ${input.cursorId}
+                    AND "user_id" = ${user.id}
+                )`,
+          );
+
+    const rawOrders = input.direction === "previous"
+      ? await this.db
+          .select()
+          .from(energyConsumptionOrders)
+          .where(pageCondition)
+          .orderBy(
+            asc(energyConsumptionOrders.createdAt),
+            asc(energyConsumptionOrders.id),
+          )
+          .limit(input.limit + 1)
+      : await this.db
+          .select()
+          .from(energyConsumptionOrders)
+          .where(pageCondition)
+          .orderBy(
+            desc(energyConsumptionOrders.createdAt),
+            desc(energyConsumptionOrders.id),
+          )
+          .limit(input.limit + 1);
+
+    const hasMore = rawOrders.length > input.limit;
+    const selected = rawOrders.slice(0, input.limit);
+    const orders =
+      input.direction === "previous"
+        ? [...selected].reverse()
+        : selected;
 
     if (orders.length === 0) {
-      return { kind: "ready", orders: [] };
+      return {
+        kind: "ready",
+        orders: [],
+        previousCursor:
+          input.direction === "next" && hasCursor
+            ? input.cursorId!
+            : null,
+        nextCursor:
+          input.direction === "previous" && hasCursor
+            ? input.cursorId!
+            : null,
+      };
     }
 
     const deliveries = await this.db
@@ -203,6 +260,27 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       ]),
     );
 
+    const first = orders[0]!;
+    const last = orders[orders.length - 1]!;
+    const previousCursor =
+      !hasCursor
+        ? null
+        : input.direction === "previous"
+          ? hasMore
+            ? first.id
+            : null
+          : first.id;
+    const nextCursor =
+      !hasCursor
+        ? hasMore
+          ? last.id
+          : null
+        : input.direction === "previous"
+          ? last.id
+          : hasMore
+            ? last.id
+            : null;
+
     return {
       kind: "ready",
       orders: orders.map((order) =>
@@ -212,6 +290,8 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
           delivery: deliveryByOrderId.get(order.id),
         }),
       ),
+      previousCursor,
+      nextCursor,
     };
   }
 
