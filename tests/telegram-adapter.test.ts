@@ -660,6 +660,70 @@ describe("Telegram adapter", () => {
     ).toBe(true);
   });
 
+  it("fails closed for legacy payment buttons without a purchase intent", async () => {
+    const calls: string[] = [];
+    const purchaseInputs: unknown[] = [];
+    const callbackBodies: string[] = [];
+    const underlyingFetch = mockFetch(calls);
+    const bot = createTelegramBot("123456:TEST_TOKEN", {
+      start: {
+        async execute() {
+          return { kind: "ready", packages: [] };
+        },
+      },
+      packageSelection: {
+        async select() {
+          return { kind: "unavailable" };
+        },
+      },
+      adminAccess: {
+        async getRole() {
+          return undefined;
+        },
+      },
+      purchaseOrderCreation: {
+        async create(input) {
+          purchaseInputs.push(input);
+          return { kind: "invalid_request" };
+        },
+      },
+    }, {
+      botInfo: botInfo(),
+      client: {
+        fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+          if (url.endsWith("/answerCallbackQuery")) {
+            callbackBodies.push(String(init?.body ?? ""));
+          }
+          return underlyingFetch(input, init);
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 250,
+      callback_query: {
+        id: "legacy-payment",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}`,
+        message: {
+          message_id: 25,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    expect(purchaseInputs).toEqual([]);
+    expect(callbackBodies).toHaveLength(1);
+    expect(callbackBodies[0]).toContain("支付操作已更新");
+  });
+
   it("keeps duplicate purchase presses idempotent and fresh intents distinct", async () => {
     const calls: string[] = [];
     const purchaseInputs: unknown[] = [];
