@@ -420,7 +420,7 @@ describe("Telegram adapter", () => {
 
     expect(bodies.at(-1)).toContain("请选择支付方式");
     expect(bodies.at(-1)).toContain("USDT 支付");
-    expect(bodies.at(-1)).toContain("package%3Apay%3AUSDT%3A");
+    expect(bodies.at(-1)).toContain("package:pay:USDT:");
   });
 
   it("answers stale private callback data instead of leaving the client loading", async () => {
