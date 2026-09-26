@@ -660,7 +660,7 @@ describe("Telegram adapter", () => {
     ).toBe(true);
   });
 
-  it("uses one purchase action identity across repeated button presses", async () => {
+  it("keeps duplicate purchase presses idempotent and fresh intents distinct", async () => {
     const calls: string[] = [];
     const purchaseInputs: unknown[] = [];
 
@@ -750,6 +750,21 @@ describe("Telegram adapter", () => {
         chat_instance: "instance-1",
         data: `package:pay:USDT:${packageId}:${purchaseIntentId}`,
         message: {
+          message_id: 99,
+          date: 1_700_000_000,
+          chat: privateChat(),
+        },
+      },
+    });
+
+    await bot.handleUpdate({
+      update_id: 5,
+      callback_query: {
+        id: "callback-payment-fresh-intent",
+        from: user(),
+        chat_instance: "instance-1",
+        data: `package:pay:USDT:${packageId}:ZyXw987_`,
+        message: {
           message_id: 11,
           date: 1_700_000_000,
           chat: privateChat(),
@@ -757,7 +772,7 @@ describe("Telegram adapter", () => {
       },
     });
 
-    expect(purchaseInputs).toHaveLength(2);
+    expect(purchaseInputs).toHaveLength(3);
     expect(purchaseInputs[1]).toMatchObject({
       telegramUserId: 42n,
       packageId,
@@ -771,6 +786,14 @@ describe("Telegram adapter", () => {
       asset: "USDT",
       idempotencyKey:
         "telegram:purchase:42:AbCd123_",
+      requestedAt: expect.any(Date),
+    });
+    expect(purchaseInputs[2]).toMatchObject({
+      telegramUserId: 42n,
+      packageId,
+      asset: "USDT",
+      idempotencyKey:
+        "telegram:purchase:42:ZyXw987_",
       requestedAt: expect.any(Date),
     });
     expect(
