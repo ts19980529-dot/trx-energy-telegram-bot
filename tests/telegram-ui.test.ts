@@ -34,35 +34,49 @@ describe("Telegram package UI", () => {
   });
 
   it("builds and parses payment method callback data", () => {
-    expect(packagePaymentCallbackData(id, "USDT")).toBe(
+    expect(packagePaymentCallbackData(id, "USDT", "AbCd123_")).toBe(
       `package:pay:USDT:${id}`,
     );
     expect(
-      parsePackagePaymentCallbackData(`package:pay:USDT:${id}`),
+      parsePackagePaymentCallbackData(`package:pay:USDT:${id}:AbCd123_`),
     ).toEqual({
       asset: "USDT",
       packageId: id,
+      purchaseIntentId: "AbCd123_",
     });
     expect(
-      parsePackagePaymentCallbackData(`package:pay:TRX:${id}`),
+      parsePackagePaymentCallbackData(`package:pay:TRX:${id}:AbCd123_`),
     ).toEqual({
       asset: "TRX",
       packageId: id,
+      purchaseIntentId: "AbCd123_",
     });
     expect(
       parsePackagePaymentCallbackData("package:pay:BTC:not-a-uuid"),
     ).toBeUndefined();
   });
 
+  it("rejects legacy payment callbacks without a purchase intent", () => {
+    expect(
+      parsePackagePaymentCallbackData(`package:pay:USDT:${id}`),
+    ).toBeUndefined();
+  });
+
   it("only offers supported payment buttons", () => {
-    const buttons = buildPaymentMethodKeyboard(id).inline_keyboard.flat();
+    const buttons = buildPaymentMethodKeyboard(id, "AbCd123_").inline_keyboard.flat();
     expect(buttons.map((button) => button.text)).toEqual([
       "USDT 支付",
       "返回套餐列表",
       "返回主菜单",
     ]);
     expect(buttons[0] && "callback_data" in buttons[0] ? buttons[0].callback_data : undefined)
-      .toBe(`package:pay:USDT:${id}`);
+      .toBe(`package:pay:USDT:${id}:AbCd123_`);
+    expect(
+      Buffer.byteLength(
+        packagePaymentCallbackData(id, "USDT", "AbCd123_"),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(64);
   });
 
   it("renders exact USDT payment instructions from the frozen order snapshot", () => {
