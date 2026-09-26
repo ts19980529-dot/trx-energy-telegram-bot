@@ -89,6 +89,9 @@ export class PurchaseOrderStatusService {
       throw new Error("Purchase order page direction requires a cursor");
     }
 
+    if (input.cursorId !== undefined && input.direction === undefined) {
+      throw new Error("Purchase order page cursor requires a direction");
+    }
     return this.repository.listOwnedPage({
       telegramUserId: input.telegramUserId,
       limit,
