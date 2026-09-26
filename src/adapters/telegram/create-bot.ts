@@ -10,7 +10,10 @@ import {
 } from "grammy";
 
 import type { EnergyOrderQueryService } from "../../application/energy/energy-order-query-service.js";
-import type { EnergyUsageService } from "../../application/energy/energy-usage-service.js";
+import type {
+  EnergyPreparationService,
+  EnergyUsageService,
+} from "../../application/energy/energy-usage-service.js";
 import type { PurchaseOrderCreationService } from "../../application/payments/purchase-order-service.js";
 import type { PurchaseOrderStatusService } from "../../application/payments/purchase-order-status-service.js";
 import type { AdminAccessService } from "../../application/telegram/admin-access-service.js";
@@ -76,6 +79,10 @@ export interface TelegramBotServices {
   readonly packageSelection: Pick<PackageSelectionService, "select">;
   readonly balanceQuery?: Pick<BalanceQueryService, "get">;
   readonly adminAccess: Pick<AdminAccessService, "getRole">;
+  readonly energyPreparation?: Pick<
+    EnergyPreparationService,
+    "prepare"
+  >;
   readonly energyUsage?: Pick<
     EnergyUsageService,
     "prepare" | "execute"
@@ -103,10 +110,8 @@ export function createTelegramBot(
   config?: BotConfig<Context>,
 ): Bot {
   const bot = new Bot(token, config);
-  const purchaseOrderCreationAvailable = (): boolean =>
-    services.purchaseOrderCreation !== undefined &&
-    (services.purchaseOrderCreation.isAvailable?.() ?? true);
-
+  const energyPreparation =
+    services.energyPreparation ?? services.energyUsage;
   const newPurchaseIntentId = (): string =>
     randomBytes(6).toString("base64url");
 
@@ -206,10 +211,9 @@ export function createTelegramBot(
       return;
     }
 
-    const energyEnabled = services.energyUsage !== undefined;
+    const energyEnabled = energyPreparation !== undefined;
     const packageCatalogAvailable = result.packages.length > 0;
-    const purchaseEnabled =
-      packageCatalogAvailable && purchaseOrderCreationAvailable();
+    const purchaseEnabled = packageCatalogAvailable;
     const energyHistoryEnabled =
       services.energyOrderQuery !== undefined;
     const purchaseHistoryEnabled =
@@ -318,10 +322,10 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
 
-    if (services.energyUsage === undefined) {
+    if (energyPreparation === undefined) {
       await renderInteractive(
         ctx,
-        "当前能量服务尚未启用。",
+        "当前能量服务暂不可用。",
         buildHomeKeyboard(),
       );
       return;
@@ -517,8 +521,8 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.energyUsage === undefined) {
-      await ctx.reply("当前能量服务尚未启用。");
+    if (energyPreparation === undefined) {
+      await ctx.reply("当前能量服务暂不可用。");
       return;
     }
 
@@ -528,7 +532,7 @@ export function createTelegramBot(
       return;
     }
 
-    const result = await services.energyUsage.prepare({
+    const result = await energyPreparation.prepare({
       telegramUserId: BigInt(ctx.from.id),
       recipientAddress,
     });
@@ -582,9 +586,9 @@ export function createTelegramBot(
       return;
     }
 
-    if (services.energyUsage === undefined) {
+    if (energyPreparation === undefined) {
       await ctx.answerCallbackQuery({
-        text: "当前能量服务尚未启用。",
+        text: "当前能量服务暂不可用。",
         show_alert: true,
       });
       return;
@@ -592,7 +596,7 @@ export function createTelegramBot(
 
     await ctx.answerCallbackQuery();
 
-    const result = await services.energyUsage.prepare({
+    const result = await energyPreparation.prepare({
       telegramUserId: BigInt(ctx.from.id),
       recipientAddress: selection.recipientAddress,
     });
@@ -677,7 +681,7 @@ export function createTelegramBot(
 
     if (services.energyUsage === undefined) {
       await ctx.answerCallbackQuery({
-        text: "当前能量服务尚未启用。",
+        text: "当前能量投递暂不可用，未创建订单，也不会扣除笔数。",
         show_alert: true,
       });
       return;
@@ -871,7 +875,6 @@ export function createTelegramBot(
       return;
     }
 
-    const paymentEnabled = purchaseOrderCreationAvailable();
     await renderInteractive(
       ctx,
       [
@@ -880,16 +883,12 @@ export function createTelegramBot(
         `笔数：${result.package.count} 笔`,
         `价格：${formatUsdtMicros(result.package.priceUsdtMicros)} USDT`,
         "",
-        paymentEnabled
-          ? "请选择支付方式："
-          : "支付功能暂未开放，可先查看套餐信息。",
+        "请选择支付方式：",
       ].join("\n"),
-      paymentEnabled
-        ? buildPaymentMethodKeyboard(
-            result.package.id,
-            newPurchaseIntentId(),
-          )
-        : buildPackageNavigationKeyboard(),
+      buildPaymentMethodKeyboard(
+        result.package.id,
+        newPurchaseIntentId(),
+      ),
     );
   });
 
@@ -1086,7 +1085,7 @@ export function createTelegramBot(
 
   handlers.on("message:text", async (ctx) => {
     await ctx.reply(
-      services.energyUsage === undefined
+      energyPreparation === undefined
         ? "未识别输入，请发送 /start 打开服务菜单。"
         : "未识别输入，请发送有效的 TRON 地址，或发送 /start 返回菜单。",
     );

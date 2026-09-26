@@ -154,50 +154,11 @@ function canonicalTronAddress(
   return codec.toBase58Check(encoded);
 }
 
-function resultFromOrder(
-  order: EnergyConsumptionSnapshot,
-): ExecuteEnergyUsageResult {
-  if (order.status === "completed") {
-    return { kind: "completed", order };
-  }
-
-  if (order.status === "released" || order.status === "cancelled") {
-    return { kind: "released", order };
-  }
-
-  return { kind: "processing", order };
-}
-
-function providerResultStatus(
-  result: EnergyDeliveryResult | EnergyOrderStatus,
-): Exclude<ProviderDeliveryStatus, "pending"> {
-  return result.status;
-}
-
-export class EnergyUsageService {
-  private readonly providers: ReadonlyMap<string, EnergyProvider>;
-  // Transient same-process serialization only; durable idempotency remains in the repository/provider.
-  private readonly activeOrders = new Map<string, Promise<void>>();
-
+export class EnergyPreparationService {
   constructor(
-    private readonly repository: EnergyUsageRepository,
-    private readonly provider: EnergyProvider,
+    private readonly repository: Pick<EnergyUsageRepository, "prepare">,
     private readonly addressCodec: TronAddressCodec,
-    historicalProviders: readonly EnergyProvider[] = [],
-  ) {
-    const registered = new Map<string, EnergyProvider>();
-    for (const entry of [provider, ...historicalProviders]) {
-      if (entry.name.trim().length === 0 || registered.has(entry.name)) {
-        throw new Error("Energy providers must have distinct non-empty names");
-      }
-      registered.set(entry.name, entry);
-    }
-    this.providers = registered;
-  }
-
-  canResumeDelivery(providerName: string | null): boolean {
-    return providerName === null || this.providers.has(providerName);
-  }
+  ) {}
 
   async prepare(input: {
     readonly telegramUserId: bigint;
@@ -225,6 +186,64 @@ export class EnergyUsageService {
       reservedCount: prepared.reservedCount,
       options: prepared.options,
     };
+  }
+}
+
+function resultFromOrder(
+  order: EnergyConsumptionSnapshot,
+): ExecuteEnergyUsageResult {
+  if (order.status === "completed") {
+    return { kind: "completed", order };
+  }
+
+  if (order.status === "released" || order.status === "cancelled") {
+    return { kind: "released", order };
+  }
+
+  return { kind: "processing", order };
+}
+
+function providerResultStatus(
+  result: EnergyDeliveryResult | EnergyOrderStatus,
+): Exclude<ProviderDeliveryStatus, "pending"> {
+  return result.status;
+}
+
+export class EnergyUsageService {
+  private readonly providers: ReadonlyMap<string, EnergyProvider>;
+  private readonly preparation: EnergyPreparationService;
+  // Transient same-process serialization only; durable idempotency remains in the repository/provider.
+  private readonly activeOrders = new Map<string, Promise<void>>();
+
+  constructor(
+    private readonly repository: EnergyUsageRepository,
+    private readonly provider: EnergyProvider,
+    private readonly addressCodec: TronAddressCodec,
+    historicalProviders: readonly EnergyProvider[] = [],
+  ) {
+    this.preparation = new EnergyPreparationService(
+      repository,
+      addressCodec,
+    );
+    const registered = new Map<string, EnergyProvider>();
+    for (const entry of [provider, ...historicalProviders]) {
+      if (entry.name.trim().length === 0 || registered.has(entry.name)) {
+        throw new Error("Energy providers must have distinct non-empty names");
+      }
+      registered.set(entry.name, entry);
+    }
+    this.providers = registered;
+  }
+
+  canResumeDelivery(providerName: string | null): boolean {
+    return providerName === null || this.providers.has(providerName);
+  }
+
+  async prepare(input: {
+    readonly telegramUserId: bigint;
+    readonly recipientAddress: string;
+  }): Promise<PrepareEnergyUsageResult> {
+    return this.preparation.prepare(input);
   }
 
   async execute(input: {
