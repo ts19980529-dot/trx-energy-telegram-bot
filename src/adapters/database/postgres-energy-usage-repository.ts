@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import type {
   EnergyConsumptionSnapshot,
@@ -181,59 +181,26 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
       throw new Error("Active Energy customer is missing package balance");
     }
 
-    let cursor:
-      | { readonly id: string; readonly createdAt: Date }
-      | undefined;
-
-    if (input.cursorId !== undefined) {
-      [cursor] = await this.db
-        .select({
-          id: energyConsumptionOrders.id,
-          createdAt: energyConsumptionOrders.createdAt,
-        })
-        .from(energyConsumptionOrders)
-        .where(
-          and(
-            eq(energyConsumptionOrders.id, input.cursorId),
-            eq(energyConsumptionOrders.userId, user.id),
-          ),
-        )
-        .limit(1);
-
-      if (cursor === undefined) {
-        return {
-          kind: "ready",
-          orders: [],
-          previousCursor: null,
-          nextCursor: null,
-        };
-      }
-    }
-
+    const hasCursor = input.cursorId !== undefined;
     const pageCondition =
-      cursor === undefined
+      !hasCursor
         ? eq(energyConsumptionOrders.userId, user.id)
-        : input.direction === "previous"
-          ? and(
-              eq(energyConsumptionOrders.userId, user.id),
-              or(
-                gt(energyConsumptionOrders.createdAt, cursor.createdAt),
-                and(
-                  eq(energyConsumptionOrders.createdAt, cursor.createdAt),
-                  gt(energyConsumptionOrders.id, cursor.id),
-                ),
-              ),
-            )
-          : and(
-              eq(energyConsumptionOrders.userId, user.id),
-              or(
-                lt(energyConsumptionOrders.createdAt, cursor.createdAt),
-                and(
-                  eq(energyConsumptionOrders.createdAt, cursor.createdAt),
-                  lt(energyConsumptionOrders.id, cursor.id),
-                ),
-              ),
-            );
+        : and(
+            eq(energyConsumptionOrders.userId, user.id),
+            input.direction === "previous"
+              ? sql`(${energyConsumptionOrders.createdAt}, ${energyConsumptionOrders.id}) > (
+                  SELECT "created_at", "id"
+                  FROM "energy_consumption_orders"
+                  WHERE "id" = ${input.cursorId}
+                    AND "user_id" = ${user.id}
+                )`
+              : sql`(${energyConsumptionOrders.createdAt}, ${energyConsumptionOrders.id}) < (
+                  SELECT "created_at", "id"
+                  FROM "energy_consumption_orders"
+                  WHERE "id" = ${input.cursorId}
+                    AND "user_id" = ${user.id}
+                )`,
+          );
 
     const rawOrders = input.direction === "previous"
       ? await this.db
@@ -267,12 +234,12 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
         kind: "ready",
         orders: [],
         previousCursor:
-          input.direction === "next" && cursor !== undefined
-            ? cursor.id
+          input.direction === "next" && hasCursor
+            ? input.cursorId!
             : null,
         nextCursor:
-          input.direction === "previous" && cursor !== undefined
-            ? cursor.id
+          input.direction === "previous" && hasCursor
+            ? input.cursorId!
             : null,
       };
     }
@@ -296,7 +263,7 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
     const first = orders[0]!;
     const last = orders[orders.length - 1]!;
     const previousCursor =
-      cursor === undefined
+      !hasCursor
         ? null
         : input.direction === "previous"
           ? hasMore
@@ -304,7 +271,7 @@ export class PostgresEnergyUsageRepository implements EnergyUsageRepository {
             : null
           : first.id;
     const nextCursor =
-      cursor === undefined
+      !hasCursor
         ? hasMore
           ? last.id
           : null
